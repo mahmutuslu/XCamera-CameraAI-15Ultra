@@ -19,9 +19,9 @@ import io.github.libxposed.api.XposedModuleInterface;
  *    0 -> original XCamera list [0.6, 1, 3, 4.3]
  *    1 -> verified 200MP single button [4.3] (fallback)
  *    2 -> user requested three buttons [1, 3, 4.3] (DEFAULT)
- * The mode 175 initial selection is managed by the app; it was 1x in
- * the user's original test. No forced 4.3x selection is applied.
- * Three-button list remains TEST ONLY until verified on device.
+ * On the real 15 Ultra, mode 175 starts at 4.3x.
+ * The three-button [1,3,4.3] UI is confirmed NOT to change physical sensors.
+ * Real 1x/3x high-resolution routing remains unresolved.
  * Existing AI hooks remain unchanged.
  * Actual sensor resolution and HAL are never modified.
  */
@@ -36,6 +36,7 @@ public final class ModernCameraAIHook extends XposedModule {
     private static final AtomicInteger pixelZoomTrace = new AtomicInteger();
     private static final AtomicInteger pixelSwitchTrace = new AtomicInteger();
     private static final AtomicInteger pixelRouteTrace = new AtomicInteger();
+    private static final AtomicInteger pixelSelectorTrace = new AtomicInteger();
 
     private void note(String text) {
         log(android.util.Log.INFO, TAG, text);
@@ -381,56 +382,86 @@ public final class ModernCameraAIHook extends XposedModule {
         }
     }
 
+
     /**
-     * Read-only diagnostic for the physical camera selector. Compute what the
-     * native PHOTO (mode 163) selector would choose for this same requested
-     * ratio, but NEVER apply this result to mode 175. Switching a 200MP
-     * sensor pipeline onto a 50MP camera without matching output streams
-     * could break capture, so only log a candidate.
+     * Read-only investigation of Xiaomi Camera 6.8's physical sensor chooser.
+     * The mode-175 special branch in B2.c.c(...) calls optical lens-role
+     * flags (l9.r0.e/f/g/h) and Pe.b.x1(). Stock 6.7's C2.c.c(...) shares
+     * the equivalent branch. This code makes ONE original selector call and
+     * NEVER changes the requested mode, camera ID or HAL pipeline.
+     *
+     * Property: debug.cameraai.pixelrouteprobe=1. Default OFF.
+     * This is NOT a working 1x/3x high-resolution optical switch yet.
      */
     private void hookPixelLensSelectorProbe(ClassLoader loader) {
-        final boolean enabled = "1".equals(systemFlag("debug.cameraai.pixelrouteprobe", "0"));
-        if (!enabled) {
-            note("PixelModule physical lens selector probe OFF");
+        if (!"1".equals(systemFlag("debug.cameraai.pixelrouteprobe", "0"))) {
+            note("PixelModule native physical selector probe OFF");
             return;
         }
         try {
             Class<?> manager = Class.forName("i9.g", false, loader);
             Method setter = manager.getDeclaredMethod("setZoomRatio", float.class);
-            Field mode = manager.getDeclaredField("c");
-            mode.setAccessible(true);
+            Field modeField = manager.getDeclaredField("c");
+            modeField.setAccessible(true);
             hook(setter).intercept(chain -> {
-                if (mode.getInt(chain.getThisObject()) == 175) {
+                Object current = chain.getThisObject();
+                if (current != null && modeField.getInt(current) == 175) {
                     float ratio = (Float) chain.getArg(0);
                     pixelRequestedZoom = ratio;
-                    if (pixelRouteTrace.getAndIncrement() < 25) {
-                        note("PIXEL175 request zoom=" + ratio);
+                    if (pixelRouteTrace.getAndIncrement() < 20) {
+                        note("PIXEL175 requested physical-lens zoom=" + ratio);
                     }
                 }
                 return chain.proceed();
             });
-            Class<?> selector = Class.forName("B2.c", false, loader);
-            Method physical = selector.getDeclaredMethod(
+            Class<?> physicalSelector = Class.forName("B2.c", false, loader);
+            Method select = physicalSelector.getDeclaredMethod(
                 "c", int.class, int.class, boolean.class);
-            hook(physical).intercept(chain -> {
-                Object[] originalArgs = chain.getArgs().toArray();
-                Object actual = chain.proceed();
-                int modeId = (Integer) originalArgs[1];
-                float ratio = pixelRequestedZoom;
-                if (modeId == 175 && (Math.abs(ratio-1f) < .1f ||
-                    Math.abs(ratio-3f) < .1f) && pixelRouteTrace.getAndIncrement() < 40) {
-                    Object[] photomode = originalArgs.clone();
-                    photomode[1] = Integer.valueOf(163);
-                    Object candidate = chain.proceed(photomode);
-                    note("PIXEL175 physical camera mapping: selectedZoom=" + ratio
-                        + ", native175=" + actual + ", native163PhotoCandidate="
-                        + candidate + " (DIAGNOSTIC ONLY)");
+            hook(select).intercept(chain -> {
+                Object[] args = chain.getArgs().toArray();
+                Object selected = chain.proceed(); // IMPORTANT: call original ONCE
+                int captureMode = (Integer) args[1];
+                if (captureMode == 175 && pixelSelectorTrace.getAndIncrement() < 30) {
+                    note("PIXEL175 physical selector: inputId=" + args[0]
+                        + ", mode=" + captureMode + ", flag=" + args[2]
+                        + ", zoom=" + pixelRequestedZoom + ", nativeCameraId=" + selected
+                        + ", roleFlags=" + readPixelRoleFlags(loader));
                 }
-                return actual;
+                return selected;
             });
-            note("PixelModule physical selector B2.c.c probe installed (no override)");
+            note("PIXEL175 B2.c.c physical selector tracing installed (read-only)");
         } catch (Throwable e) {
-            note("PixelModule selector diagnostic unavailable: " + e);
+            note("PIXEL175 physical selector tracing unavailable: " + e);
         }
+    }
+
+    private String readPixelRoleFlags(ClassLoader loader) {
+        StringBuilder result = new StringBuilder();
+        try {
+            Class<?> role = Class.forName("l9.r0", false, loader);
+            for (String name : new String[]{"e", "f", "g", "h"}) {
+                try {
+                    Method flag = role.getDeclaredMethod(name);
+                    flag.setAccessible(true);
+                    result.append(name).append('=').append(flag.invoke(null)).append(' ');
+                } catch (Throwable ignored) {
+                    result.append(name).append("=? ");
+                }
+            }
+        } catch (Throwable e) {
+            result.append("roleUnavailable=").append(e.getClass().getSimpleName());
+        }
+        try {
+            Class<?> capability = Class.forName("Pe.b", false, loader);
+            Method get = capability.getDeclaredMethod("D");
+            get.setAccessible(true);
+            Object instance = get.invoke(null);
+            Method optical = capability.getDeclaredMethod("x1");
+            optical.setAccessible(true);
+            result.append(" x1=").append(optical.invoke(instance));
+        } catch (Throwable e) {
+            result.append(" x1Unavailable=").append(e.getClass().getSimpleName());
+        }
+        return result.toString();
     }
 }
