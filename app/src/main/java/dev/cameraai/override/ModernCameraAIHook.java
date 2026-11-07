@@ -3,6 +3,7 @@ package dev.cameraai.override;
 import android.util.SparseArray;
 import org.json.JSONObject;
 import java.lang.reflect.Method;
+import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -30,6 +31,7 @@ public final class ModernCameraAIHook extends XposedModule {
     private static final long EXTENDED_MS = 15000L;
     private static boolean initialized = false;
     private static final AtomicInteger zoomTrace = new AtomicInteger();
+    private static final AtomicInteger deviceZoomTrace = new AtomicInteger();
 
     private void note(String text) {
         log(android.util.Log.INFO, TAG, text);
@@ -46,6 +48,7 @@ public final class ModernCameraAIHook extends XposedModule {
         hookTimeout(loader);
         hookZoomPresets(loader);
         hookRuntimeZoomDiagnostics(loader);
+        hookZoomTranslationProbe(loader);
     }
 
     private void hookJson() {
@@ -284,6 +287,40 @@ public final class ModernCameraAIHook extends XposedModule {
             note("SAT zoom diagnostic hook installed");
         } catch (Throwable e) {
             note("SAT zoom diagnostic unavailable: " + e);
+        }
+    }
+
+
+    /**
+     * Native 200MP zoom investigation on Xiaomi 15 Ultra:
+     * UI sends 1.0/3.0/4.3, but cameraId 5 always receives 1.1219512.
+     * Observe the exact obfuscated conversion i9.g.nh(float) in Camera 6.8,
+     * without touching its return value or changing camera/HAL routing.
+     */
+    private void hookZoomTranslationProbe(ClassLoader loader) {
+        try {
+            Class<?> zoomManager = Class.forName("i9.g", false, loader);
+            Method convert = zoomManager.getDeclaredMethod("nh", float.class);
+            Field modeField = zoomManager.getDeclaredField("c");
+            modeField.setAccessible(true);
+            hook(convert).intercept(chain -> {
+                Object value = chain.proceed();
+                try {
+                    Object instance = chain.getThisObject();
+                    int mode = instance != null ? modeField.getInt(instance) : -1;
+                    if (mode == 175 && deviceZoomTrace.getAndIncrement() < 60) {
+                        note("MODE175 ZoomManager device translation "
+                            + chain.getArg(0) + " -> " + value
+                            + " (OBSERVE ONLY, original conversion preserved)");
+                    }
+                } catch (Throwable e) {
+                    note("zoom translation observation skipped: " + e);
+                }
+                return value;
+            });
+            note("200MP ZoomManager.nh(float) conversion probe installed (no override)");
+        } catch (Throwable e) {
+            note("200MP ZoomManager conversion probe unavailable: " + e);
         }
     }
 
