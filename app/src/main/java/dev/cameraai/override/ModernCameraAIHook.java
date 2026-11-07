@@ -39,6 +39,7 @@ public final class ModernCameraAIHook extends XposedModule {
     private static final AtomicInteger pixelSelectorTrace = new AtomicInteger();
     private static final AtomicInteger pixelDecisionTrace = new AtomicInteger();
     private static final AtomicInteger pixelStreamTrace = new AtomicInteger();
+    private static final AtomicInteger pixelSizeMapTrace = new AtomicInteger();
 
     private void note(String text) {
         log(android.util.Log.INFO, TAG, text);
@@ -591,6 +592,20 @@ public final class ModernCameraAIHook extends XposedModule {
                 }
                 return result;
             });
+
+            // updateSizeResult(Map) is the concrete handoff from m6.o size
+            // selections into Camera2Module's capture/preview configuration.
+            Method resultMap = camera2.getDeclaredMethod(
+                "updateSizeResult", java.util.Map.class);
+            hook(resultMap).intercept(chain -> {
+                if (pixel.isInstance(chain.getThisObject())
+                    && pixelSizeMapTrace.getAndIncrement() < 12) {
+                    note("PIXEL175 OEM updateSizeResult map: "
+                        + summarizePixelSizeMap(chain.getArg(0)));
+                }
+                return chain.proceed();
+            });
+            note("PIXEL175 OEM result size map tracing installed (read-only)");
             note("PIXEL175 OEM picture/preview-size and QCFA tracing installed (read-only)");
         } catch (Throwable e) {
             note("PIXEL175 output-size/QCFA tracing unavailable: " + e);
@@ -626,42 +641,79 @@ public final class ModernCameraAIHook extends XposedModule {
         return false;
     }
 
+
     private String safePixelSizeFields(Field baseField, Object module) {
         try {
             Object base = baseField.get(module);
             if (base == null) return "mLoadStreamSizeBase=null";
-            Class<?> klass = base.getClass();
+            // Use DECLARING type, not runtime subclass: getDeclaredField(...)
+            // against a subclass failed in v2.2, producing y=? z=? v=?.
+            Class<?> owner = baseField.getType(); // m6.o
             StringBuilder result = new StringBuilder();
-            for (String name : new String[]{"y", "z", "v"}) {
+            result.append("baseClass=").append(base.getClass().getName()).append(' ');
+            int printed = 0;
+            for (Field fld : owner.getDeclaredFields()) {
+                if (fld.getType() != android.util.Size.class) continue;
                 try {
-                    Field size = klass.getDeclaredField(name);
-                    size.setAccessible(true);
-                    result.append(name).append('=').append(size.get(base)).append(' ');
-                } catch (Throwable error) {
-                    result.append(name).append("=? ");
+                    fld.setAccessible(true);
+                    Object value = fld.get(base);
+                    if (value != null && printed++ < 30) {
+                        result.append(fld.getName()).append('=').append(value).append(' ');
+                    }
+                } catch (Throwable failure) {
+                    result.append(fld.getName()).append("ERR=")
+                        .append(failure.getClass().getSimpleName()).append(' ');
                 }
             }
             try {
-                Field context = klass.getDeclaredField("E");
+                Field context = owner.getDeclaredField("E");
                 context.setAccessible(true);
                 Object metadata = context.get(base);
-                if (metadata != null) {
-                    for (String name : new String[]{"d", "u", "l"}) {
+                if (metadata == null) {
+                    result.append("ctx=null");
+                } else {
+                    Class<?> metadataClass = context.getType();
+                    for (String name : new String[]{"a", "d", "l", "u"}) {
                         try {
-                            Field fld = metadata.getClass().getDeclaredField(name);
+                            Field fld = metadataClass.getDeclaredField(name);
                             fld.setAccessible(true);
                             result.append("ctx.").append(name).append('=')
                                 .append(fld.get(metadata)).append(' ');
-                        } catch (Throwable ignored) {
-                            result.append("ctx.").append(name).append("=? ");
+                        } catch (Throwable failure) {
+                            result.append("ctx.").append(name).append("ERR=")
+                                .append(failure.getClass().getSimpleName()).append(' ');
                         }
                     }
                 }
-            } catch (Throwable ignored) { result.append("ctx=?"); }
-            return result.toString();
+            } catch (Throwable failure) {
+                result.append("ctxERR=").append(failure.getClass().getSimpleName());
+            }
+            return result.length() > 1800 ? result.substring(0, 1800) : result.toString();
         } catch (Throwable e) {
             return "sizeFieldsUnavailable=" + e.getClass().getSimpleName();
         }
     }
+
+    private String summarizePixelSizeMap(Object mapArg) {
+        if (!(mapArg instanceof java.util.Map)) return String.valueOf(mapArg);
+        java.util.Map<?, ?> map = (java.util.Map<?, ?>) mapArg;
+        StringBuilder result = new StringBuilder();
+        result.append("entryCount=").append(map.size()).append(" {");
+        int count = 0;
+        for (java.util.Map.Entry<?, ?> entry : map.entrySet()) {
+            Object value = entry.getValue();
+            if (value instanceof android.util.Size || value instanceof Number) {
+                if (count++ >= 35) {
+                    result.append("... ");
+                    break;
+                }
+                result.append(entry.getKey()).append('=')
+                    .append(value).append("; ");
+            }
+        }
+        result.append('}');
+        return result.length() > 1800 ? result.substring(0, 1800) : result.toString();
+    }
+
 
 }
