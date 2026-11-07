@@ -35,6 +35,12 @@ Cihazın `dumpsys media.camera -v 2` verilerinden, `cameraId 6`nın `physicalIds
 
 Bu **donanım destek kanıtıdır**, PixelModule 175 içinde otomatik hibrit lens geçişi yaptığı anlamına gelmez. 4.3x çalışan 200MP yolu korunurken 1x/3x için 50MP stream ve yeniden yapılandırılmış kamera oturumu gerekir. [HAL kanıt raporu](HAL_XUANYUAN_KAMERA_HARITASI_2026-11-08.md).
 
+## v2.2 QCFA akış tanısı (8 Kasım 2026)
+
+Kamera 6.8'in gerçek `Camera2Module.updatePictureAndPreviewSize()`, `updateConfigQcfa()` ve `m6.o.f(...):Size` metotlarına salt-okunur kancalar eklendi. `debug.cameraai.streamprobe=1` ile `PixelModule` mod 175 için kamera/çözünürlük/QCFA akış kararları loglanır. V2.2 normalde bu kancayı kapalı tutar. [v2.2 test planı](QCFA_STREAM_v2.2_TEST.md).
+
+**Sürüm henüz gerçek 1x/3x lens değiştirme düzeltmesi değildir.** 4.3x 200MP fotoğraf yoluna dokunulmamıştır. 1x/3x için HAL'deki 50MP boyutlar ve uygun CaptureSession birlikte seçilmeden fiziksel ID zorlaması yapılmayacak.
+
 ## Kaynak kod ve üçüncü taraf dosyalar
 `app/` bizim geliştirdiğimiz modern LSPosed API 102 köprüsüdür. XCamera 1.2 APK'sı ve Xiaomi Kamera APK'sı depoda **yer almaz**. `tools/merge_and_sign.py`, kullanıcı tarafından sağlanan XCamera 1.2 APK'sına kendi derlediğimiz köprünün DEX dosyasını ekler. XCamera'nın `classes.dex` kodunu değiştirmez.
 
@@ -46,7 +52,7 @@ Lokal derleme:
 ```bash
 gradle :app:assembleDebug
 python -m pip install -r requirements.txt
-python tools/merge_and_sign.py --xcamera XCamera-1.2.apk --bridge app/build/outputs/apk/debug/app-debug.apk --output XCamera-CameraAI-v2.1-TEST.apk --version-name 2.1
+python tools/merge_and_sign.py --xcamera XCamera-1.2.apk --bridge app/build/outputs/apk/debug/app-debug.apk --output XCamera-CameraAI-v2.2-TEST.apk --version-name 2.2
 ```
 
 Birleştirici ilk çalışmada `keys/` altında **yerel özel imza anahtarı** üretir. Güncellemelerde aynı anahtarı koruyun; depoya veya başkasına göndermeyin. Farklı imzalı XCamera'nın üzerine APK yüklenemeyeceğinden önceki modül/kurulum yedeğini alın. **Sistem Kamera uygulamasını kaldırmayın**.
