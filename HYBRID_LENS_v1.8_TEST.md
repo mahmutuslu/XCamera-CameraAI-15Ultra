@@ -1,5 +1,7 @@
 # XCamera + CameraAI v1.8 — Hibrit 50 MP / 200 MP Lens Yönlendirmesi (DENEY)
 
+> **SONUÇ — CİHAZDA BAŞARISIZ (7 Kasım 2026, 23:16).** Hibrit yama, gerçek 1x/3x zoom veya 1x başlangıç sağlayamadı. `175 → 167` isteği `PreFixCamera2Setup` aşamasında `actualCameraId: 2` oluşturuyor ama `Camera2OpenOnSubScribe` hâlâ `actualCameraId: 5` açıyor. Bu nedenle **v1.8 gerçek lens yönlendirme çözümü değildir**. Deneysel `debug.cameraai.hybridroute=1` ayarını artık kullanmayın; `0` yapın. 
+
 ## Arka plan
 
 Xiaomi 15 Ultra, HyperOS 4, Xiaomi 18 Pro Camera 6.8.002090.2, LSPosed API 102.
@@ -67,3 +69,15 @@ Bu özellik parametresi sıfırlandığında yama devre dışı kalır; bu koşu
 - **Modern API 102 derlemesi:** GitHub Actions başarılı.
 - **APK bütünlüğü/imza:** doğrulandı, v1.7 ile aynı imza.
 - **Gerçek lens geçişi ve fotoğraf çözünürlüğü:** *cihazda henüz doğrulanmadı*.
+
+## Cihaz testi — 23:16
+
+```text
+HYBRID: zoom requested, mode=175, zoom=1.0
+HYBRID: physical lens route via Camera's own high-res modes 175 -> 167 for 1.0x
+PreFixCamera2Setup: mPendingOpenModule=167, actualCameraId=2
+Camera2OpenOnSubScribe: request to open bogusCameraId=0, actualCameraId=5
+HYBRID: zoom requested, mode=167, zoom=1.0
+```
+
+1x ve 3x gerçek zoom sağlamadı; 200 MP modu 4.3x ile açılmaya devam etti. Özellikle 3x seçiminde `175→167` geçişine ait başarı kaydı görülmedi. Bu durum, `StartControl.create(int)` parametresinin optik geçişin tamamı olmadığını kanıtlıyor. Yeni uygulamada yalnızca `StartControl` hedef modunu değiştirmek yerine gerçek kamera açma/önhazırlık ve fotoğraf boyutu rotası bütünleşik incelenmeli. Bu deney tekrar **varsayılan açık** yapılmamalıdır.
