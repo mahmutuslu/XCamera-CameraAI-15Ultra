@@ -5,6 +5,7 @@ import org.json.JSONObject;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicInteger;
 import io.github.libxposed.api.XposedModule;
 import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedModuleInterface;
@@ -28,6 +29,7 @@ public final class ModernCameraAIHook extends XposedModule {
     private static final String TARGET_MODEL = "madrid";
     private static final long EXTENDED_MS = 15000L;
     private static boolean initialized = false;
+    private static final AtomicInteger zoomTrace = new AtomicInteger();
 
     private void note(String text) {
         log(android.util.Log.INFO, TAG, text);
@@ -43,6 +45,7 @@ public final class ModernCameraAIHook extends XposedModule {
         hookGson(loader);
         hookTimeout(loader);
         hookZoomPresets(loader);
+        hookRuntimeZoomDiagnostics(loader);
     }
 
     private void hookJson() {
@@ -177,6 +180,110 @@ public final class ModernCameraAIHook extends XposedModule {
                 + "; initial zoom managed by Xiaomi Camera (previously 1x)");
         } catch (Throwable e) {
             note("mode175 zoom preset hook unavailable: " + e);
+        }
+    }
+
+
+    private String systemFlag(String name, String fallback) {
+        try {
+            return String.valueOf(Class.forName("android.os.SystemProperties")
+                .getMethod("get", String.class, String.class)
+                .invoke(null, name, fallback));
+        } catch (Throwable e) {
+            note("property " + name + " unavailable: " + e);
+            return fallback;
+        }
+    }
+
+    private int currentMode(Object module) {
+        if (module == null) return -1;
+        try {
+            Class<?> base = module.getClass();
+            while (base != null) {
+                try {
+                    Method m = base.getDeclaredMethod("getModuleIndex");
+                    m.setAccessible(true);
+                    return (Integer) m.invoke(module);
+                } catch (NoSuchMethodException ignored) {
+                    base = base.getSuperclass();
+                }
+            }
+        } catch (Throwable e) {
+            note("currentMode lookup failed: " + e);
+        }
+        return -1;
+    }
+
+    /**
+     * The 1x/3x/4.3x list is ONLY a UI preset array; Xiaomi can still disable
+     * zoom in UltraPixel mode. This probe logs the *actual* zoom gating and UI
+     * calls. Override is opt-in: debug.cameraai.realzoom=1, default OFF.
+     *
+     * Only the isZoomEnabled result for CaptureModule in mode 175 can change.
+     * This does not change sensors, JPEG/HEIC output, HAL or optical zoom.
+     */
+    private void hookRuntimeZoomDiagnostics(ClassLoader loader) {
+        final boolean tryEnable = "1".equals(
+            systemFlag("debug.cameraai.realzoom", "0"));
+        note("200MP actual-zoom probe start; enable zoom gate test=" + tryEnable);
+        try {
+            Class<?> capture = Class.forName(
+                "com.android.camera.features.mode.capture.CaptureModule", false, loader);
+            Method enabled = capture.getDeclaredMethod("isZoomEnabled");
+            enabled.setAccessible(true);
+            hook(enabled).intercept(chain -> {
+                Object result = chain.proceed();
+                int mode = currentMode(chain.getThisObject());
+                if (mode == 175) {
+                    if (zoomTrace.getAndIncrement() < 24) {
+                        note("MODE175 isZoomEnabled original=" + result
+                            + ", override=" + tryEnable);
+                    }
+                    if (tryEnable && Boolean.FALSE.equals(result)) return Boolean.TRUE;
+                }
+                return result;
+            });
+            note("CaptureModule.isZoomEnabled diagnostic hook installed");
+        } catch (Throwable e) {
+            note("CaptureModule.isZoomEnabled diagnostic unavailable: " + e);
+        }
+        try {
+            Class<?> zoom = Class.forName(
+                "com.xiaomi.camera.features.zoom.ui.view.toggle.ZoomRatioToggleView",
+                false, loader);
+            Method ratio = zoom.getDeclaredMethod("setZoomRatio", float.class);
+            hook(ratio).intercept(chain -> {
+                if (zoomTrace.getAndIncrement() < 100) {
+                    note("zoom toggle setZoomRatio=" + chain.getArg(0));
+                }
+                return chain.proceed();
+            });
+            Method arr = zoom.getDeclaredMethod("setZoomArray", float[].class);
+            hook(arr).intercept(chain -> {
+                Object value = chain.getArg(0);
+                note("zoom toggle setZoomArray="
+                    + (value instanceof float[] ? Arrays.toString((float[]) value)
+                       : String.valueOf(value)));
+                return chain.proceed();
+            });
+            note("zoom toggle update hooks installed");
+        } catch (Throwable e) {
+            note("zoom toggle probe unavailable: " + e);
+        }
+        try {
+            Class<?> camera2 = Class.forName(
+                "com.android.camera.module.Camera2Module", false, loader);
+            Method sat = camera2.getDeclaredMethod("updateSATZooming", int.class);
+            hook(sat).intercept(chain -> {
+                if (zoomTrace.getAndIncrement() < 100) {
+                    note("updateSATZooming(value=" + chain.getArg(0)
+                        + ", mode=" + currentMode(chain.getThisObject()) + ")");
+                }
+                return chain.proceed();
+            });
+            note("SAT zoom diagnostic hook installed");
+        } catch (Throwable e) {
+            note("SAT zoom diagnostic unavailable: " + e);
         }
     }
 
