@@ -37,6 +37,7 @@ public final class ModernCameraAIHook extends XposedModule {
     private static final AtomicInteger pixelSwitchTrace = new AtomicInteger();
     private static final AtomicInteger pixelRouteTrace = new AtomicInteger();
     private static final AtomicInteger pixelSelectorTrace = new AtomicInteger();
+    private static final AtomicInteger pixelDecisionTrace = new AtomicInteger();
 
     private void note(String text) {
         log(android.util.Log.INFO, TAG, text);
@@ -56,6 +57,7 @@ public final class ModernCameraAIHook extends XposedModule {
         hookZoomTranslationProbe(loader);
         hookPixelModeRouting(loader);
         hookPixelLensSelectorProbe(loader);
+        hookPixelZoomDecisionTrace(loader);
     }
 
     private void hookJson() {
@@ -464,4 +466,74 @@ public final class ModernCameraAIHook extends XposedModule {
         }
         return result.toString();
     }
+    /**
+     * Read-only tracing of native 175 zoom preference (source: 6.8 classes.dex):
+     *   CameraSettings i.n(int mode,int lens) -> float
+     *   CameraSettings i.O(int mode) -> float
+     *
+     * These are called from the native zoom initialization and physical
+     * camera selector, respectively. Capture return values unmodified.
+     *
+     * The actual first 175 startup value was 4.3 on the user's phone.
+     * Record which getter returns it before attempting any "1x default" patch.
+     */
+    private void hookPixelZoomDecisionTrace(ClassLoader loader) {
+        if (!"1".equals(systemFlag("debug.cameraai.zoomdecisionprobe", "0"))) {
+            note("PIXEL175 startup/selector zoom decision probe OFF");
+            return;
+        }
+        try {
+            Class<?> settings = Class.forName(
+                "com.android.camera.data.data.i", false, loader);
+            Method initial = settings.getDeclaredMethod("n", int.class, int.class);
+            hook(initial).intercept(chain -> {
+                Object value = chain.proceed();
+                if (Integer.valueOf(175).equals(chain.getArg(0))
+                    && pixelDecisionTrace.getAndIncrement() < 40) {
+                    note("PIXEL175 zoom preference i.n: mode=" + chain.getArg(0)
+                        + ", lens=" + chain.getArg(1)
+                        + ", unmodifiedValue=" + value);
+                }
+                return value;
+            });
+            Method lensPreference = settings.getDeclaredMethod("O", int.class);
+            hook(lensPreference).intercept(chain -> {
+                Object value = chain.proceed();
+                if (Integer.valueOf(175).equals(chain.getArg(0))
+                    && pixelDecisionTrace.getAndIncrement() < 55) {
+                    note("PIXEL175 camera selector i.O: mode=" + chain.getArg(0)
+                        + ", unmodifiedValue=" + value
+                        + ", requestedZoom=" + pixelRequestedZoom);
+                }
+                return value;
+            });
+            note("PIXEL175 native default zoom + lens selection input traces installed");
+        } catch (Throwable e) {
+            note("PIXEL175 zoom decision traces unavailable: " + e);
+        }
+        try {
+            Class<?> zoom = Class.forName("i9.g", false, loader);
+            Method initialize = zoom.getDeclaredMethod("B7");
+            Field mode = zoom.getDeclaredField("c");
+            Field ratio = zoom.getDeclaredField("l");
+            mode.setAccessible(true);
+            ratio.setAccessible(true);
+            hook(initialize).intercept(chain -> {
+                Object instance = chain.getThisObject();
+                boolean target = instance != null && mode.getInt(instance) == 175;
+                if (target && pixelDecisionTrace.getAndIncrement() < 55) {
+                    note("PIXEL175 ZoomManager.B7 initialize before=" + ratio.getFloat(instance));
+                }
+                Object result = chain.proceed();
+                if (target && pixelDecisionTrace.getAndIncrement() < 55) {
+                    note("PIXEL175 ZoomManager.B7 initialize after=" + ratio.getFloat(instance));
+                }
+                return result;
+            });
+            note("PIXEL175 ZoomManager.B7 native initialization trace installed");
+        } catch (Throwable e) {
+            note("PIXEL175 ZoomManager.B7 trace unavailable: " + e);
+        }
+    }
+
 }
