@@ -16,7 +16,7 @@ Xiaomi 15 Ultra (`xuanyuan`, HyperOS 4) için **bağımsız, deneysel LSPosed mo
 - **Üç düğmeli [1, 3, 4.3] profil cihazda test edildi ve gerçek zoom'da BAŞARISIZ.** Düğmeler algılanıp oranlar 1/3/4.3'e değişse de kameraya her seferinde 1.121951 zoom oranı gönderiliyor; gerçek kamera kimliği 5 olarak kalıyor. 200 MP modu açıldığında uygulama 4.3x ile başlıyor.
 - **v1.7**, zoom dönüştürücü `i9.g.nh(float)` yöntemini salt-okunur izler; gerçek zoom düzeltmesi değil, teşhis sürümüdür.
 - **v1.8 hibrit lens yönlendirmesi — CİHAZ TESTİNDE BAŞARISIZ.** `175→167` önerisi hem geçişi tamamlayamadı hem de **167'nin Pro modu** olduğu sonradan doğrulandı. v1.9'da bu yanlış deney kaldırıldı. [Hata raporu](HYBRID_LENS_v1.8_TEST.md).
-- **v1.9 PixelModule lens izni testi — HENÜZ DOĞRULANMADI.** Gerçek 200 MP `PixelModule` (175) için zoom ve lens değiştirme izinlerini **isteğe bağlı** olarak açmayı dener. Kameranın sensör kimliklerini zorlamaz, 1x başlangıcı değiştirmez. [Deneme ve geri dönüş](PIXEL_ZOOM_v1.9_TEST.md).
+- **v1.9 PixelModule lens izni testi — CİHAZ TESTİNDE BAŞARISIZ.** `isCameraSwitchingDuringZoomingAllowed()` zaten `true`; müdahale sensör değiştirmiyor. `cameraId=5` ve fiziksel zoom `1.1219512` kalıyor. `debug.cameraai.pixelzoom=0` önerilir. [Tanı ve geri dönüş](PIXEL_ZOOM_v1.9_TEST.md).
 
 ## Kaynak kod ve üçüncü taraf dosyalar
 `app/` bizim geliştirdiğimiz modern LSPosed API 102 köprüsüdür. XCamera 1.2 APK'sı ve Xiaomi Kamera APK'sı depoda **yer almaz**. `tools/merge_and_sign.py`, kullanıcı tarafından sağlanan XCamera 1.2 APK'sına kendi derlediğimiz köprünün DEX dosyasını ekler. XCamera'nın `classes.dex` kodunu değiştirmez.
