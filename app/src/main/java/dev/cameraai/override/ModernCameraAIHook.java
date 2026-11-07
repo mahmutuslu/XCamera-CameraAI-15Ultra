@@ -38,6 +38,7 @@ public final class ModernCameraAIHook extends XposedModule {
     private static final AtomicInteger pixelRouteTrace = new AtomicInteger();
     private static final AtomicInteger pixelSelectorTrace = new AtomicInteger();
     private static final AtomicInteger pixelDecisionTrace = new AtomicInteger();
+    private static final AtomicInteger pixelStreamTrace = new AtomicInteger();
 
     private void note(String text) {
         log(android.util.Log.INFO, TAG, text);
@@ -58,6 +59,7 @@ public final class ModernCameraAIHook extends XposedModule {
         hookPixelModeRouting(loader);
         hookPixelLensSelectorProbe(loader);
         hookPixelZoomDecisionTrace(loader);
+        hookPixelOutputStreamProbe(loader);
     }
 
     private void hookJson() {
@@ -533,6 +535,132 @@ public final class ModernCameraAIHook extends XposedModule {
             note("PIXEL175 ZoomManager.B7 native initialization trace installed");
         } catch (Throwable e) {
             note("PIXEL175 ZoomManager.B7 trace unavailable: " + e);
+        }
+    }
+
+    /**
+     * v2.2: Capture the REAL high-resolution stream decisions, without ever
+     * mutating them. DEX-verified 6.8 targets:
+     *
+     * Camera2Module.updatePictureAndPreviewSize() : void  (private)
+     * Camera2Module.updateConfigQcfa() : void  (private)
+     * m6.o.f(int,int,List,float,Size,boolean) : Size (public static)
+     *
+     * In updatePictureAndPreviewSize, the image/preview/algorithm size and
+     * actual physical camera are stored in mLoadStreamSizeBase (m6.o);
+     * the snapshot records both before and after normal OEM calculation.
+     *
+     * Property debug.cameraai.streamprobe=1 (OFF unless opted in).
+     * This does NOT switch sensors, overwrite sizes or call methods twice.
+     */
+    private void hookPixelOutputStreamProbe(ClassLoader loader) {
+        if (!"1".equals(systemFlag("debug.cameraai.streamprobe", "0"))) {
+            note("PIXEL175 output-size/QCFA probe OFF");
+            return;
+        }
+        try {
+            Class<?> pixel = Class.forName("com.android.camera.features.mode.pixel.PixelModule", false, loader);
+            Class<?> camera2 = Class.forName("com.android.camera.module.Camera2Module", false, loader);
+            Field sizeField = camera2.getDeclaredField("mLoadStreamSizeBase");
+            sizeField.setAccessible(true);
+            Method updateSizes = camera2.getDeclaredMethod("updatePictureAndPreviewSize");
+            hook(updateSizes).intercept(chain -> {
+                Object target = chain.getThisObject();
+                if (!pixel.isInstance(target)) return chain.proceed();
+                int seq = pixelStreamTrace.getAndIncrement();
+                if (seq < 20) {
+                    note("PIXEL175 output-size BEFORE " + safePixelSizeFields(sizeField, target));
+                }
+                Object result = chain.proceed();
+                if (seq < 20) {
+                    note("PIXEL175 output-size AFTER " + safePixelSizeFields(sizeField, target));
+                }
+                return result;
+            });
+            Method qcfa = camera2.getDeclaredMethod("updateConfigQcfa");
+            hook(qcfa).intercept(chain -> {
+                Object target = chain.getThisObject();
+                if (!pixel.isInstance(target)) return chain.proceed();
+                int seq = pixelStreamTrace.getAndIncrement();
+                if (seq < 24) {
+                    note("PIXEL175 updateConfigQcfa BEFORE " + safePixelSizeFields(sizeField, target));
+                }
+                Object result = chain.proceed();
+                if (seq < 24) {
+                    note("PIXEL175 updateConfigQcfa AFTER " + safePixelSizeFields(sizeField, target));
+                }
+                return result;
+            });
+            note("PIXEL175 OEM picture/preview-size and QCFA tracing installed (read-only)");
+        } catch (Throwable e) {
+            note("PIXEL175 output-size/QCFA tracing unavailable: " + e);
+        }
+        try {
+            Class<?> selector = Class.forName("m6.o", false, loader);
+            Method size = selector.getDeclaredMethod(
+                "f", int.class, int.class, java.util.List.class,
+                float.class, android.util.Size.class, boolean.class);
+            hook(size).intercept(chain -> {
+                Object selected = chain.proceed();
+                if (inPixelSizeDecision() && pixelStreamTrace.getAndIncrement() < 32) {
+                    note("PIXEL175 m6.o.f size decision: modeOrCamera=" + chain.getArg(0)
+                        + ", cameraOrMode=" + chain.getArg(1) + ", ratio=" + chain.getArg(3)
+                        + ", sizeHint=" + chain.getArg(4) + ", switch=" + chain.getArg(5)
+                        + ", OEMselected=" + selected);
+                }
+                return selected;
+            });
+            note("PIXEL175 m6.o.f size result tracing installed (read-only)");
+        } catch (Throwable e) {
+            note("PIXEL175 m6.o.f size tracing unavailable: " + e);
+        }
+    }
+
+    private boolean inPixelSizeDecision() {
+        for (StackTraceElement frame : Thread.currentThread().getStackTrace()) {
+            if ("com.android.camera.module.Camera2Module".equals(frame.getClassName())
+                && "updatePictureAndPreviewSize".equals(frame.getMethodName())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String safePixelSizeFields(Field baseField, Object module) {
+        try {
+            Object base = baseField.get(module);
+            if (base == null) return "mLoadStreamSizeBase=null";
+            Class<?> klass = base.getClass();
+            StringBuilder result = new StringBuilder();
+            for (String name : new String[]{"y", "z", "v"}) {
+                try {
+                    Field size = klass.getDeclaredField(name);
+                    size.setAccessible(true);
+                    result.append(name).append('=').append(size.get(base)).append(' ');
+                } catch (Throwable error) {
+                    result.append(name).append("=? ");
+                }
+            }
+            try {
+                Field context = klass.getDeclaredField("E");
+                context.setAccessible(true);
+                Object metadata = context.get(base);
+                if (metadata != null) {
+                    for (String name : new String[]{"d", "u", "l"}) {
+                        try {
+                            Field fld = metadata.getClass().getDeclaredField(name);
+                            fld.setAccessible(true);
+                            result.append("ctx.").append(name).append('=')
+                                .append(fld.get(metadata)).append(' ');
+                        } catch (Throwable ignored) {
+                            result.append("ctx.").append(name).append("=? ");
+                        }
+                    }
+                }
+            } catch (Throwable ignored) { result.append("ctx=?"); }
+            return result.toString();
+        } catch (Throwable e) {
+            return "sizeFieldsUnavailable=" + e.getClass().getSimpleName();
         }
     }
 
