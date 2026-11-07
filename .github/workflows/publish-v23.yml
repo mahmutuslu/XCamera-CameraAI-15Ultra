@@ -1,0 +1,33 @@
+name: Publish approved v2.3 diagnostic APK
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/publish-v23.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore and verify approved APK
+        run: |
+          base64 --decode release-assets/v2.3.apk.gz.b64 | gzip -d > XCamera_CameraAI_v2.3_QCFA_TEST.apk
+          echo "dd99230d7c3678e6a8302833dee08e3b597bf6c01dd68b031b764c98833ee886  XCamera_CameraAI_v2.3_QCFA_TEST.apk" | sha256sum --check
+      - name: Publish test download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > /tmp/notes.txt <<'NOTES'
+          Birleşik XCamera + CameraAI v2.3 tanılama APK'sı. Gerçek 1x/3x lens geçişi düzeltmesi değildir; cihaz testi bekleniyor.
+          Farklı imzalıdır: yalnızca eski XCamera modülünü kaldırıp bu APK'yı kurun. Sistem Kamera uygulamasını kaldırmayın. LSPosed kapsamı: com.android.camera.
+          Test adımları: QCFA_STREAM_v2.3_SIZE_MAP_TEST.md.
+          SHA256: dd99230d7c3678e6a8302833dee08e3b597bf6c01dd68b031b764c98833ee886
+          NOTES
+          if gh release view v2.3-qcfa-test >/dev/null 2>&1; then
+            gh release upload v2.3-qcfa-test XCamera_CameraAI_v2.3_QCFA_TEST.apk --clobber
+            gh release edit v2.3-qcfa-test --draft=false --prerelease --notes-file /tmp/notes.txt
+          else
+            gh release create v2.3-qcfa-test XCamera_CameraAI_v2.3_QCFA_TEST.apk --title "XCamera + CameraAI v2.3 QCFA TEST" --notes-file /tmp/notes.txt --prerelease
+          fi
