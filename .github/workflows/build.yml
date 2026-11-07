@@ -28,6 +28,11 @@ jobs:
           curl -fsSL https://services.gradle.org/distributions/gradle-8.9-bin.zip -o /tmp/gradle.zip
           unzip -q /tmp/gradle.zip -d /opt
           echo /opt/gradle-8.9/bin >> "$GITHUB_PATH"
+      - name: Verify standalone APK merge tool
+        run: |
+          python -m pip install -r requirements.txt
+          python -m py_compile tools/merge_and_sign.py
+          python tools/merge_and_sign.py --help
       - name: Build bridge
         run: gradle --no-daemon :app:assembleDebug
       - uses: actions/upload-artifact@v4
