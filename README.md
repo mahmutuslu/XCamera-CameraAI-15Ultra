@@ -15,7 +15,7 @@ Xiaomi 15 Ultra (`xuanyuan`, HyperOS 4) için **bağımsız, deneysel LSPosed mo
 - Önceki **tek düğmeli** [4.3] deneyinde 12.288 × 16.320 (200,54 MP) fotoğraf doğrulandı.
 - **Üç düğmeli [1, 3, 4.3] profil cihazda test edildi ve gerçek zoom'da BAŞARISIZ.** Düğmeler algılanıp oranlar 1/3/4.3'e değişse de kameraya her seferinde 1.121951 zoom oranı gönderiliyor; gerçek kamera kimliği 5 olarak kalıyor. 200 MP modu açıldığında uygulama 4.3x ile başlıyor.
 - **v1.7**, zoom dönüştürücü `i9.g.nh(float)` yöntemini salt-okunur izler; gerçek zoom düzeltmesi değil, teşhis sürümüdür.
-- **v1.8 hibrit lens yönlendirmesi (opt-in TEST)**, 1x/3x için 50 MP (mode 167) ve 4.3x için 200 MP (mode 175) arasında Kamera uygulamasının kendi yüksek çözünürlük modu üzerinden geçiş yapmayı dener. Kamera/HAL kimlikleri zorlanmaz. **Cihazda henüz doğrulanmadı.** [Kurulum ve geri dönüş](HYBRID_LENS_v1.8_TEST.md).
+- **v1.8 hibrit lens yönlendirmesi — CİHAZ TESTİNDE BAŞARISIZ.** `175→167` hazırlık adımında kamera ID 2 hesaplanıyor fakat gerçek açılış ID 5 olarak kalıyor. 1x/3x çalışmıyor, 200 MP hâlâ 4.3x ile açılıyor. `debug.cameraai.hybridroute=0` önerilir. [Hata raporu](HYBRID_LENS_v1.8_TEST.md).
 
 ## Kaynak kod ve üçüncü taraf dosyalar
 `app/` bizim geliştirdiğimiz modern LSPosed API 102 köprüsüdür. XCamera 1.2 APK'sı ve Xiaomi Kamera APK'sı depoda **yer almaz**. `tools/merge_and_sign.py`, kullanıcı tarafından sağlanan XCamera 1.2 APK'sına kendi derlediğimiz köprünün DEX dosyasını ekler. XCamera'nın `classes.dex` kodunu değiştirmez.
