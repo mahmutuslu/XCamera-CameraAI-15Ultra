@@ -6,8 +6,8 @@ android {
         applicationId 'dev.cameraai.bridge'
         minSdk 28
         targetSdk 28
-        versionCode 19
-        versionName '1.9.0-pixel-lens-gates-test'
+        versionCode 20
+        versionName '2.0.0-selector-readonly'
     }
 }
 dependencies {
