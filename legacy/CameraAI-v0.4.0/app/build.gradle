@@ -1,0 +1,5 @@
+plugins { id 'com.android.application' }
+android { namespace 'dev.cameraai.override'; compileSdk 35
+ defaultConfig { applicationId 'dev.cameraai.override'; minSdk 28; targetSdk 28; versionCode 4; versionName '0.4.0' }
+}
+dependencies { compileOnly 'de.robv.android.xposed:api:82' }
