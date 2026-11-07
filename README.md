@@ -20,6 +20,8 @@ Xiaomi 15 Ultra (`xuanyuan`, HyperOS 4) için **bağımsız, deneysel LSPosed mo
 
 - **v2.0 fiziksel seçici incelemesi — OKUMA AMAÇLI TEST.** Stok 6.7 ve port 6.8'in `PixelModule` kamera seçim koşulları karşılaştırıldı. `B2.c.c` ve rol/yetenek bayrakları tek orijinal çağrıda kaydediliyor; lens seçimi değiştirilmez. [Kod incelemesi ve test](PIXEL_SELECTOR_v2.0_KARAR_DALI.md).
 
+- **v2.1 zoom karar mekanizması — SALT OKUNUR TEST.** Kamera 6.8 DEX'inde doğrulanan `com.android.camera.data.data.i.n(int,int)`, `i.O(int)` ve `i9.g.B7()` giriş/çıkışlarını kayıt altına alır; kamera ID'si/zoom hesabı/çıktı değiştirilmez. [Test planı](ZOOM_DECISION_v2.1_TEST.md).
+
 ## Kaynak kod ve üçüncü taraf dosyalar
 `app/` bizim geliştirdiğimiz modern LSPosed API 102 köprüsüdür. XCamera 1.2 APK'sı ve Xiaomi Kamera APK'sı depoda **yer almaz**. `tools/merge_and_sign.py`, kullanıcı tarafından sağlanan XCamera 1.2 APK'sına kendi derlediğimiz köprünün DEX dosyasını ekler. XCamera'nın `classes.dex` kodunu değiştirmez.
 
@@ -31,7 +33,7 @@ Lokal derleme:
 ```bash
 gradle :app:assembleDebug
 python -m pip install -r requirements.txt
-python tools/merge_and_sign.py --xcamera XCamera-1.2.apk --bridge app/build/outputs/apk/debug/app-debug.apk --output XCamera-CameraAI-v2.0-TEST.apk --version-name 2.0
+python tools/merge_and_sign.py --xcamera XCamera-1.2.apk --bridge app/build/outputs/apk/debug/app-debug.apk --output XCamera-CameraAI-v2.1-TEST.apk --version-name 2.1
 ```
 
 Birleştirici ilk çalışmada `keys/` altında **yerel özel imza anahtarı** üretir. Güncellemelerde aynı anahtarı koruyun; depoya veya başkasına göndermeyin. Farklı imzalı XCamera'nın üzerine APK yüklenemeyeceğinden önceki modül/kurulum yedeğini alın. **Sistem Kamera uygulamasını kaldırmayın**.
