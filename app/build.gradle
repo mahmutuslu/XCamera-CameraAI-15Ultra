@@ -1,0 +1,15 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'dev.cameraai.override'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'dev.cameraai.bridge'
+        minSdk 28
+        targetSdk 28
+        versionCode 15
+        versionName '1.5.0-threezoom-test'
+    }
+}
+dependencies {
+    compileOnly 'io.github.libxposed:api:102.0.0'
+}
