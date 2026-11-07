@@ -155,7 +155,7 @@ def repack(xcamera_path, bridge_path):
                 if name == 'AndroidManifest.xml':
                     original_version = '1.2'.encode('utf-16le')
                     assert content.count(original_version) == 1, 'XCamera 1.2 manifest expected'
-                    content = content.replace(original_version, '1.5'.encode('utf-16le'))
+                    content = content.replace(original_version, args.version_name.encode('utf-16le'))
                 if name == 'META-INF/xposed/java_init.list':
                     content = (b'dev.cameraai.override.ModernCameraAIHook\n'
                                b'com.leekinn.xcamera.XCameraModule\n')
@@ -189,6 +189,8 @@ def main():
     parser.add_argument('--xcamera', type=pathlib.Path, required=True)
     parser.add_argument('--bridge', type=pathlib.Path, required=True)
     parser.add_argument('--output', type=pathlib.Path, required=True)
+    parser.add_argument('--version-name', default='1.5', choices=['1.5','1.6'],
+                        help='Merged APK versionName')
     parser.add_argument('--keydir', type=pathlib.Path,
         default=PROJECT_ROOT/'keys', help='Private signing keys; never upload')
     args = parser.parse_args()
