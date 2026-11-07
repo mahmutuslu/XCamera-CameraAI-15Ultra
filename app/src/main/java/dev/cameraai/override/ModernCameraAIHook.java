@@ -1,0 +1,183 @@
+package dev.cameraai.override;
+
+import android.util.SparseArray;
+import org.json.JSONObject;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.util.Arrays;
+import io.github.libxposed.api.XposedModule;
+import io.github.libxposed.api.XposedInterface;
+import io.github.libxposed.api.XposedModuleInterface;
+
+/**
+ * CameraAI v0.4 -> modern libxposed API 102 bridge.
+ * Intended as a second entry alongside an UNMODIFIED XCamera 1.2 dex.
+ *
+ * MODE-175 zoom presets (property debug.cameraai.zoomprofile):
+ *    0 -> original XCamera list [0.6, 1, 3, 4.3]
+ *    1 -> verified 200MP single button [4.3] (fallback)
+ *    2 -> user requested three buttons [1, 3, 4.3] (DEFAULT)
+ * The mode 175 initial selection is managed by the app; it was 1x in
+ * the user's original test. No forced 4.3x selection is applied.
+ * Three-button list remains TEST ONLY until verified on device.
+ * Existing AI hooks remain unchanged.
+ * Actual sensor resolution and HAL are never modified.
+ */
+public final class ModernCameraAIHook extends XposedModule {
+    private static final String TAG = "CameraAIMerged";
+    private static final String TARGET_MODEL = "madrid";
+    private static final long EXTENDED_MS = 15000L;
+    private static boolean initialized = false;
+
+    private void note(String text) {
+        log(android.util.Log.INFO, TAG, text);
+    }
+
+    @Override
+    public void onPackageReady(XposedModuleInterface.PackageReadyParam p) {
+        if (!"com.android.camera".equals(p.getPackageName()) || initialized) return;
+        initialized = true;
+        ClassLoader loader = p.getClassLoader();
+        note("modern API 102 entry; camera AI hooks starting");
+        hookJson();
+        hookGson(loader);
+        hookTimeout(loader);
+        hookZoomPresets(loader);
+    }
+
+    private void hookJson() {
+        try {
+            Method put = JSONObject.class.getDeclaredMethod("put", String.class, Object.class);
+            hook(put).intercept(chain -> {
+                Object key = chain.getArg(0);
+                if ("phone_model".equals(key)) {
+                    Object[] args = chain.getArgs().toArray();
+                    note("phone_model " + args[1] + " -> madrid");
+                    args[1] = TARGET_MODEL;
+                    return chain.proceed(args);
+                }
+                if ("motion".equals(key) && chain.getArg(1) instanceof Number && isAiSceneBuilder()) {
+                    Object[] args = chain.getArgs().toArray();
+                    Object old = args[1];
+                    args[1] = Integer.valueOf(0);
+                    note("AI scene motion original=" + old + " -> 0 (JSON only)");
+                    return chain.proceed(args);
+                }
+                return chain.proceed();
+            });
+            note("JSONObject.put hook installed");
+        } catch (Throwable e) { note("JSONObject.put failed " + e); }
+    }
+
+    private boolean isAiSceneBuilder() {
+        for (StackTraceElement f : Thread.currentThread().getStackTrace()) {
+            if (("rn.b".equals(f.getClassName()) && "Q".equals(f.getMethodName()))
+                || ("un.a".equals(f.getClassName()) && "a".equals(f.getMethodName())))
+                return true;
+        }
+        return false;
+    }
+
+    private void hookGson(ClassLoader loader) {
+        try {
+            Class<?> gson = Class.forName("com.google.gson.JsonObject", false, loader);
+            Method addProperty = gson.getDeclaredMethod("addProperty", String.class, String.class);
+            hook(addProperty).intercept(chain -> {
+                if ("phone_model".equals(chain.getArg(0))) {
+                    Object[] args = chain.getArgs().toArray();
+                    note("Gson phone_model " + args[1] + " -> madrid");
+                    args[1] = TARGET_MODEL;
+                    return chain.proceed(args);
+                }
+                return chain.proceed();
+            });
+            note("Gson.addProperty hook installed");
+        } catch (Throwable e) { note("Gson hook unavailable " + e); }
+    }
+
+    private void hookTimeout(ClassLoader loader) {
+        try {
+            Class<?> target = Class.forName("wd.i5", false, loader);
+            int count = 0;
+            for (Method m : target.getDeclaredMethods()) {
+                if (!"f".equals(m.getName()) || !Modifier.isStatic(m.getModifiers())) continue;
+                Class<?>[] types = m.getParameterTypes();
+                if (types.length != 3 || types[0] != long.class) continue;
+                hook(m).intercept(chain -> {
+                    long original = (Long) chain.getArg(0);
+                    if (original != 3000L && original != 3500L) return chain.proceed();
+                    String kind = null;
+                    for (StackTraceElement f : Thread.currentThread().getStackTrace()) {
+                        if (original == 3000L && "pn.j".equals(f.getClassName()) && "n".equals(f.getMethodName())) {
+                            kind = "pollResult";
+                            break;
+                        }
+                        if (original == 3500L && "wn.b$a".equals(f.getClassName()) && "invokeSuspend".equals(f.getMethodName())) {
+                            kind = "pipeline";
+                            break;
+                        }
+                    }
+                    if (kind == null) return chain.proceed();
+                    Object[] args = chain.getArgs().toArray();
+                    args[0] = Long.valueOf(EXTENDED_MS);
+                    note("AI timeout " + kind + " " + original + " -> " + EXTENDED_MS + "ms");
+                    return chain.proceed(args);
+                });
+                count++;
+            }
+            note("wd.i5.f hooks installed=" + count);
+        } catch (Throwable e) { note("AI timeout hook failed " + e); }
+    }
+
+    private String zoomProfile() {
+        try {
+            return String.valueOf(Class.forName("android.os.SystemProperties")
+                .getMethod("get", String.class, String.class)
+                .invoke(null, "debug.cameraai.zoomprofile", "2"));
+        } catch (Throwable e) {
+            note("zoomprofile property unreadable; using safe three-preset mode: " + e);
+            return "2";
+        }
+    }
+
+    private void hookZoomPresets(ClassLoader loader) {
+        final String profile = zoomProfile();
+        if ("0".equals(profile)) {
+            note("200MP zoom profile 0: original XCamera defaults");
+            return;
+        }
+        if (!"1".equals(profile) && !"2".equals(profile)) {
+            note("200MP zoom profile invalid (" + profile + "); original XCamera kept");
+            return;
+        }
+        try {
+            Class<?> values = Class.forName("com.leekinn.xcamera.XCameraModule$Values",
+                false, getClass().getClassLoader());
+            Method buildZoom = values.getDeclaredMethod("lambda$build$18");
+            hook(buildZoom).intercept(chain -> {
+                Object result = chain.proceed();
+                if (!(result instanceof SparseArray)) return result;
+                @SuppressWarnings("unchecked")
+                SparseArray<Object> map = (SparseArray<Object>) result;
+                Object original = map.get(175);
+                if (!(original instanceof Float[])) {
+                    note("mode175 zoom preset type unexpected: " + original);
+                    return result;
+                }
+                Float[] replacement = "1".equals(profile)
+                    ? new Float[]{4.3f}
+                    : new Float[]{1.0f, 3.0f, 4.3f};
+                map.put(175, replacement);
+                note("mode175 presets=" + Arrays.toString(replacement)
+                    + "; original=" + Arrays.toString((Float[])original)
+                    + "; profile=" + profile);
+                return result;
+            });
+            note("200MP zoom-list hook installed, profile=" + profile
+                + "; initial zoom managed by Xiaomi Camera (previously 1x)");
+        } catch (Throwable e) {
+            note("mode175 zoom preset hook unavailable: " + e);
+        }
+    }
+
+}
