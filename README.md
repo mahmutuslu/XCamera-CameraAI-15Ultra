@@ -22,6 +22,19 @@ Xiaomi 15 Ultra (`xuanyuan`, HyperOS 4) için **bağımsız, deneysel LSPosed mo
 
 - **v2.1 zoom karar mekanizması — SALT OKUNUR TEST.** Kamera 6.8 DEX'inde doğrulanan `com.android.camera.data.data.i.n(int,int)`, `i.O(int)` ve `i9.g.B7()` giriş/çıkışlarını kayıt altına alır; kamera ID'si/zoom hesabı/çıktı değiştirilmez. [Test planı](ZOOM_DECISION_v2.1_TEST.md).
 
+## HAL gerçek kamera haritası (8 Kasım 2026)
+
+Cihazın `dumpsys media.camera -v 2` verilerinden, `cameraId 6`nın `physicalIds=[3,2,4,5]` mantıksal çoklu kamerası olduğu doğrulandı. Gerçek lensler ve Qualcomm Quadra CFA (`qcfa_dimension`) boyutları:
+
+| Fiziksel kamera | Lens | HAL QCFA boyutu |
+|---|---|---|
+| `2` | 1x ana | `8192×6144` (50MP) |
+| `3` | 0.6x ultra geniş | `8192×6144` (50MP) |
+| `4` | 3x telefoto | `8192×6144` (50MP) |
+| `5` | 4.3x periskop | `16320×12288` (200MP) |
+
+Bu **donanım destek kanıtıdır**, PixelModule 175 içinde otomatik hibrit lens geçişi yaptığı anlamına gelmez. 4.3x çalışan 200MP yolu korunurken 1x/3x için 50MP stream ve yeniden yapılandırılmış kamera oturumu gerekir. [HAL kanıt raporu](HAL_XUANYUAN_KAMERA_HARITASI_2026-11-08.md).
+
 ## Kaynak kod ve üçüncü taraf dosyalar
 `app/` bizim geliştirdiğimiz modern LSPosed API 102 köprüsüdür. XCamera 1.2 APK'sı ve Xiaomi Kamera APK'sı depoda **yer almaz**. `tools/merge_and_sign.py`, kullanıcı tarafından sağlanan XCamera 1.2 APK'sına kendi derlediğimiz köprünün DEX dosyasını ekler. XCamera'nın `classes.dex` kodunu değiştirmez.
 
