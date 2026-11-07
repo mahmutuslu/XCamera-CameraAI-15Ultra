@@ -32,8 +32,10 @@ public final class ModernCameraAIHook extends XposedModule {
     private static boolean initialized = false;
     private static final AtomicInteger zoomTrace = new AtomicInteger();
     private static final AtomicInteger deviceZoomTrace = new AtomicInteger();
-    private static volatile float lastRequestedZoom = 4.3f;
-    private static final AtomicInteger hybridTransitions = new AtomicInteger();
+    private static volatile float pixelRequestedZoom = 4.3f;
+    private static final AtomicInteger pixelZoomTrace = new AtomicInteger();
+    private static final AtomicInteger pixelSwitchTrace = new AtomicInteger();
+    private static final AtomicInteger pixelRouteTrace = new AtomicInteger();
 
     private void note(String text) {
         log(android.util.Log.INFO, TAG, text);
@@ -51,7 +53,8 @@ public final class ModernCameraAIHook extends XposedModule {
         hookZoomPresets(loader);
         hookRuntimeZoomDiagnostics(loader);
         hookZoomTranslationProbe(loader);
-        hookHybridHighResolutionRouting(loader);
+        hookPixelModeRouting(loader);
+        hookPixelLensSelectorProbe(loader);
     }
 
     private void hookJson() {
@@ -177,14 +180,6 @@ public final class ModernCameraAIHook extends XposedModule {
                     ? new Float[]{4.3f}
                     : new Float[]{1.0f, 3.0f, 4.3f};
                 map.put(175, replacement);
-                if ("1".equals(systemFlag("debug.cameraai.hybridroute", "0"))) {
-                    Object fiftyMpPresets = map.get(167);
-                    map.put(167, new Float[]{1.0f, 3.0f, 4.3f});
-                    note("HYBRID: mode167 50MP lens presets -> [1,3,4.3], old="
-                        + (fiftyMpPresets instanceof Float[]
-                            ? Arrays.toString((Float[]) fiftyMpPresets)
-                            : String.valueOf(fiftyMpPresets)));
-                }
                 note("mode175 presets=" + Arrays.toString(replacement)
                     + "; original=" + Arrays.toString((Float[])original)
                     + "; profile=" + profile);
@@ -336,89 +331,106 @@ public final class ModernCameraAIHook extends XposedModule {
     }
 
 
-    private boolean calledFromZoomLensReopen() {
-        for (StackTraceElement frame : Thread.currentThread().getStackTrace()) {
-            // Xiaomi Camera 6.8: Ph.b.e(Y, boolean, int)
-            if ("Ph.b".equals(frame.getClassName()) && "e".equals(frame.getMethodName())) {
-                return true;
-            }
+    /**
+     * Xiaomi Camera 6.8 real Ultra Pixel module is PixelModule (175);
+     * mode 167 is ProModule, NOT a 50MP Ultra Pixel module.
+     * Previous hybrid route was invalid and is intentionally removed.
+     *
+     * PixelModule declares isZoomEnabled(), unlike CaptureModule which runs
+     * in mode 163 only. The native zoom-switch permission is inherited from
+     * Camera2Module. Apply both only to PixelModule and only with opt-in.
+     *
+     * PixelModule remains mode 175. We do not alter StartControl, camera ID,
+     * output resolution, or the Camera HAL.
+     */
+    private void hookPixelModeRouting(ClassLoader loader) {
+        final boolean enabled = "1".equals(systemFlag("debug.cameraai.pixelzoom", "0"));
+        note("PixelModule native zoom gate test=" + enabled + " (mode175, no cameraId override)");
+        try {
+            Class<?> pixel = Class.forName(
+                "com.android.camera.features.mode.pixel.PixelModule", false, loader);
+            Method zoomEnabled = pixel.getDeclaredMethod("isZoomEnabled");
+            hook(zoomEnabled).intercept(chain -> {
+                Object result = chain.proceed();
+                int count = pixelZoomTrace.getAndIncrement();
+                if (count < 35) {
+                    note("PIXEL175 actual isZoomEnabled=" + result
+                        + ", force=" + enabled);
+                }
+                if (enabled && Boolean.FALSE.equals(result)) return Boolean.TRUE;
+                return result;
+            });
+            note("PixelModule.isZoomEnabled hook installed");
+            Class<?> camera2 = Class.forName("com.android.camera.module.Camera2Module", false, loader);
+            Method canSwitch = camera2.getDeclaredMethod("isCameraSwitchingDuringZoomingAllowed");
+            hook(canSwitch).intercept(chain -> {
+                Object result = chain.proceed();
+                if (pixel.isInstance(chain.getThisObject())) {
+                    int count = pixelSwitchTrace.getAndIncrement();
+                    if (count < 35) {
+                        note("PIXEL175 camera lens switching allowed=" + result
+                            + ", force=" + enabled);
+                    }
+                    if (enabled && Boolean.FALSE.equals(result)) return Boolean.TRUE;
+                }
+                return result;
+            });
+            note("PixelModule Camera2Module native lens-switch permission hook installed");
+        } catch (Throwable e) {
+            note("PixelModule native zoom gate test unavailable: " + e);
         }
-        return false;
     }
 
     /**
-     * EXPERIMENTAL 50MP/200MP hybrid switching for Xiaomi 15 Ultra only.
-     *
-     * Native Camera 6.8 mode 175 is permanently routed to the 200MP periscope,
-     * even when its UI requests 1x or 3x (observed cameraId=5, fixed HAL 1.121951).
-     * Camera 6.7 and 6.8 share the same logic: their 175 selector branches
-     * inspect lens roles and capabilities, not just the zoom preset table.
-     *
-     * Rather than spoofing a 200MP output on a 50MP sensor, opt-in changes the
-     * StartControl mode selected by Camera's own zoom-lens reopen path:
-     * 175 -> 167 (50MP UltraPixel) for 1x / 3x.
-     * 167 -> 175 (200MP periscope) for 4.3x.
-     *
-     * The real physical camera and output size remain decided by Camera's own
-     * high-resolution mode. If the reopen mechanism does not follow this
-     * route on this device, no forced cameraId/crop is applied.
-     *
-     * Property: debug.cameraai.hybridroute=1. DEFAULT OFF.
-     * This is an UNVERIFIED functional experiment, not a proven fix.
+     * Read-only diagnostic for the physical camera selector. Compute what the
+     * native PHOTO (mode 163) selector would choose for this same requested
+     * ratio, but NEVER apply this result to mode 175. Switching a 200MP
+     * sensor pipeline onto a 50MP camera without matching output streams
+     * could break capture, so only log a candidate.
      */
-    private void hookHybridHighResolutionRouting(ClassLoader loader) {
-        boolean enabled = "1".equals(
-            systemFlag("debug.cameraai.hybridroute", "0"));
+    private void hookPixelLensSelectorProbe(ClassLoader loader) {
+        final boolean enabled = "1".equals(systemFlag("debug.cameraai.pixelrouteprobe", "0"));
         if (!enabled) {
-            note("HYBRID mode175/mode167 high-resolution lens router OFF");
+            note("PixelModule physical lens selector probe OFF");
             return;
         }
         try {
             Class<?> manager = Class.forName("i9.g", false, loader);
             Method setter = manager.getDeclaredMethod("setZoomRatio", float.class);
-            Field module = manager.getDeclaredField("c");
-            module.setAccessible(true);
+            Field mode = manager.getDeclaredField("c");
+            mode.setAccessible(true);
             hook(setter).intercept(chain -> {
-                Object obj = chain.getThisObject();
-                int mode = obj == null ? -1 : module.getInt(obj);
-                float ratio = (Float) chain.getArg(0);
-                if (mode == 175 || mode == 167) {
-                    lastRequestedZoom = ratio;
-                    note("HYBRID: zoom requested, mode=" + mode + ", zoom=" + ratio);
+                if (mode.getInt(chain.getThisObject()) == 175) {
+                    float ratio = (Float) chain.getArg(0);
+                    pixelRequestedZoom = ratio;
+                    if (pixelRouteTrace.getAndIncrement() < 25) {
+                        note("PIXEL175 request zoom=" + ratio);
+                    }
                 }
                 return chain.proceed();
             });
-            Class<?> start = Class.forName(
-                "com.android.camera.module.loader.base.StartControl", false, loader);
-            Method create = start.getDeclaredMethod("create", int.class);
-            hook(create).intercept(chain -> {
-                int target = (Integer) chain.getArg(0);
-                // Only change module reopens explicitly initiated by the native
-                // optical lens switching path. Never touch normal mode-menu taps.
-                if (!calledFromZoomLensReopen()) return chain.proceed();
-                int replacement = target;
-                float requested = lastRequestedZoom;
-                if (target == 175 && requested <= 3.05f && requested >= 0.95f) {
-                    replacement = 167;
-                } else if (target == 167 && requested >= 4.25f) {
-                    replacement = 175;
+            Class<?> selector = Class.forName("B2.c", false, loader);
+            Method physical = selector.getDeclaredMethod(
+                "c", int.class, int.class, boolean.class);
+            hook(physical).intercept(chain -> {
+                Object[] originalArgs = chain.getArgs().toArray();
+                Object actual = chain.proceed();
+                int modeId = (Integer) originalArgs[1];
+                float ratio = pixelRequestedZoom;
+                if (modeId == 175 && (Math.abs(ratio-1f) < .1f ||
+                    Math.abs(ratio-3f) < .1f) && pixelRouteTrace.getAndIncrement() < 40) {
+                    Object[] photomode = originalArgs.clone();
+                    photomode[1] = Integer.valueOf(163);
+                    Object candidate = chain.proceed(photomode);
+                    note("PIXEL175 physical camera mapping: selectedZoom=" + ratio
+                        + ", native175=" + actual + ", native163PhotoCandidate="
+                        + candidate + " (DIAGNOSTIC ONLY)");
                 }
-                if (replacement == target) return chain.proceed();
-                int n = hybridTransitions.incrementAndGet();
-                if (n > 18) {
-                    note("HYBRID: transition safety limit reached; normal routing");
-                    return chain.proceed();
-                }
-                note("HYBRID: physical lens route via Camera's own high-res modes "
-                    + target + " -> " + replacement + " for " + requested + "x");
-                Object[] args = chain.getArgs().toArray();
-                args[0] = Integer.valueOf(replacement);
-                return chain.proceed(args);
+                return actual;
             });
-            note("HYBRID 50MP/200MP StartControl routing installed (OPT-IN TEST)");
+            note("PixelModule physical selector B2.c.c probe installed (no override)");
         } catch (Throwable e) {
-            note("HYBRID 50MP/200MP routing unavailable; normal Camera behavior: " + e);
+            note("PixelModule selector diagnostic unavailable: " + e);
         }
     }
-
 }
