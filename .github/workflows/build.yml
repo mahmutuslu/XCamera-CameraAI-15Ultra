@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'app/**'
+      - 'tools/**'
       - 'build.gradle'
       - 'settings.gradle'
       - '.github/workflows/build.yml'
@@ -37,6 +38,6 @@ jobs:
         run: gradle --no-daemon :app:assembleDebug
       - uses: actions/upload-artifact@v4
         with:
-          name: CameraAI-API102-Bridge-v1.5
+          name: CameraAI-API102-Bridge
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
