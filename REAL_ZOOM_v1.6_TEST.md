@@ -55,3 +55,27 @@ Gerçek cihaz logları v1.6'da şunları doğruladı:
 - **Bir sonraki adım:** mevcut APK'nın logcat'inde `ZoomRatioToggleView|clickChildAtIndex|zoomRatio|ZoomManager` satırlarını inceleyin ve gerçek tıklama yönlendirmesini belirleyin. Etkisiz `realzoom=1` deneyini `0` yapın.
 
 Donanım sınırı: Xiaomi'nin resmi teknik özelliklerine göre 200 MP mod, **100 mm (4.3x) periskop** sensör içindir; 1x ana ve 3x telefoto kameralar **50 MP** sensör kullanır. 1x/3x gerçek kadrajları sağlamak fiziksel lens değiştirmeyi gerektirir; bu iki kademenin tümüyle gerçek 200 MP sensör çıktısı sağlayacağı varsayılmamalıdır.
+
+## 7 Kasım 2026 — 22:15 gerçek zoom logu ile kesinleşen sonuç
+
+Kullanıcının Xiaomi 15 Ultra cihazında 200 MP, Kamera 6.8.002090.2 ve v1.6 kombinasyonundan alınan kayıt:
+
+| Tıklanan düğme | UI → ZoomManager | Donanıma uygulanan | Fiziksel cameraId |
+| --- | --- | --- | --- |
+| 1x | `changed from 4.3 to 1.0` | `1.121951` | `5` |
+| 3x | `changed from 1.0 to 3.0` | `1.121951` | `5` |
+| 4.3x | `changed from 3.0 to 4.3` | `1.121951` | `5` |
+
+`CaptureRequestBuilder.applyZoomRatio-R` 1x/3x için aynı `cropRegion=Rect(222,167-3858,2905)` alanını bildiriyor. Arayüz düğme çağrıları düzgün. `switchCameraLens(): t->w`, `w->t` kayıtları oluşsa da kamera seçimi `actualCameraId: 5` olarak kalıyor.
+
+**Tanı:** Arayüz değeri alınıyor, ama fiziksel kamera/çerçeve değişmiyor. `isZoomEnabled` gerçek sorunun çözüldüğünü göstermedi. Birkaç farklı görünür zoom etiketini tek sensörde gerçek optik görüntü olarak ilan etmek doğru değil.
+
+### v1.7 güvenli dönüşüm izleme
+
+`i9.g.nh(float)` adlı Kamera 6.8 zoom dönüştürücüsüne salt-okunur bir kanca eklendi; yalnızca mod 175'te en fazla 60 kez şu kaydı üretir:
+
+```
+MODE175 ZoomManager device translation <UI zoom> -> <device zoom>
+```
+
+Kamera kimliği, crop/sensör seçimi ve zoom hesaplaması **değiştirilmez**. Bu bir tanılama APK'sıdır; üç düğmeli gerçek zoom için çözüm olduğu iddia edilmez. `debug.cameraai.realzoom=0` olmalıdır; bu ayar önceki zoom-enabled deneyini kapatır.
