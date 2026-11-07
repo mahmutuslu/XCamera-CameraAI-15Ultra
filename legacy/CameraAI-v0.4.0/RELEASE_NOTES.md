@@ -19,4 +19,4 @@ Bu, KernelSU ZIP paketi değil **LSPosed APK modülüdür**. Daha eski, farklı 
 
 **APK GitHub Actions tarafından debug anahtarıyla imzalanmıştır.** Xiaomi tarafından yayımlanmış veya onaylanmış resmi yazılım değildir.
 
-Kaynak kod ve ayrıntılı notlar: [CameraAI-ModelOverride/README.md](https://github.com/mahmutuslu/fcmfix-hyperos/tree/cameraai-madrid-build/CameraAI-ModelOverride).
+Kaynak kod ve ayrıntılı notlar: [CameraAI v0.4.0 kaynak arşivi](./README.md).
