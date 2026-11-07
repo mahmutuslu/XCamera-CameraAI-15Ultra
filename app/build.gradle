@@ -6,8 +6,8 @@ android {
         applicationId 'dev.cameraai.bridge'
         minSdk 28
         targetSdk 28
-        versionCode 16
-        versionName '1.6.0-realzoom-probe'
+        versionCode 17
+        versionName '1.7.0-zoom-translation-probe'
     }
 }
 dependencies {
