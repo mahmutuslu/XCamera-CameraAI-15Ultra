@@ -134,7 +134,7 @@ def make_certificate(key):
     return cert.public_bytes(serialization.Encoding.DER)
 
 
-def repack(xcamera_path, bridge_path):
+def repack(xcamera_path, bridge_path, version_name):
     with zipfile.ZipFile(xcamera_path) as original, zipfile.ZipFile(bridge_path) as bridge:
         modern = []
         for n in bridge.namelist():
@@ -155,7 +155,7 @@ def repack(xcamera_path, bridge_path):
                 if name == 'AndroidManifest.xml':
                     original_version = '1.2'.encode('utf-16le')
                     assert content.count(original_version) == 1, 'XCamera 1.2 manifest expected'
-                    content = content.replace(original_version, args.version_name.encode('utf-16le'))
+                    content = content.replace(original_version, version_name.encode('utf-16le'))
                 if name == 'META-INF/xposed/java_init.list':
                     content = (b'dev.cameraai.override.ModernCameraAIHook\n'
                                b'com.leekinn.xcamera.XCameraModule\n')
@@ -189,7 +189,7 @@ def main():
     parser.add_argument('--xcamera', type=pathlib.Path, required=True)
     parser.add_argument('--bridge', type=pathlib.Path, required=True)
     parser.add_argument('--output', type=pathlib.Path, required=True)
-    parser.add_argument('--version-name', default='1.5', choices=['1.5','1.6'],
+    parser.add_argument('--version-name', default='1.5', choices=['1.5','1.6','1.7'],
                         help='Merged APK versionName')
     parser.add_argument('--keydir', type=pathlib.Path,
         default=PROJECT_ROOT/'keys', help='Private signing keys; never upload')
@@ -214,7 +214,7 @@ def main():
         os.chmod(key_path, 0o600)
         cert_path.write_bytes(certificate)
         print('Created private signing key; back up', keydir)
-    unsigned = repack(args.xcamera, args.bridge)
+    unsigned = repack(args.xcamera, args.bridge, args.version_name)
     signed = sign(unsigned, key, certificate)
     output = args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
