@@ -47,6 +47,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Camera18Pro-v3-alpha1-API102-debug
+          name: Camera18Pro-v3-alpha2-API102-debug
           path: Camera18Pro_V3_API102/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
