@@ -310,7 +310,7 @@ public final class CameraTurkishHook extends XposedModule {
                     CharSequence localized = local.getText(id);
                     return translate(localized);
                 } catch (Resources.NotFoundException ex) {
-                    return translate(original);
+                    return original instanceof CharSequence ? translate((CharSequence) original) : original;
                 } catch (Throwable ex) {
                     return original;
                 } finally {
