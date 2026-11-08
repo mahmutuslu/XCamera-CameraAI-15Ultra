@@ -50,3 +50,20 @@ Gönderilecek dosyada `CAMERA18PRO_V3`, `onReprocessSuccess`, `[CAPTURE-END]`, `
 ## Durum
 
 **Tanı sürümü.** Hatanın kök nedeni henüz kesinleşmedi ve PixelModule orijinal `İşleniyor` arayüzü taşınmadı. API 102 kurulumu ve derlemesi doğrulanmalı; çalışması cihaz testine tabidir.
+
+
+## Alpha 3 cihaz doğrulaması — 8 Kasım 2026, 17:50
+
+Xiaomi 15 Ultra üzerinde iki modül birlikte etkinken (CameraAIMerged + XCamera v2.3; Camera18Pro v3 Alpha 3 API 102) **üç 200MP fotoğraf** çekildi. Her üçünde de tam **16320×12288** çözünürlük, `onReprocessSuccess`, `MIVI_SUCCESS` ve `[CAPTURE-END]` kaydedildi; `miHalBufferReceiveError`, `smallPicture=true`, `MIVI_ERROR` görülmedi.
+
+| Fotoğraf | Capture ID | Ön aşama | MiVi başarı süresi | Görüntü veri uzunluğu |
+| --- | ---: | ---: | ---: | ---: |
+| IMG_20261108_175009.jpg | 1 | 517 ms | 5439 ms | 114448035 bayt |
+| IMG_20261108_175016.jpg | 2 | 506 ms | 5043 ms | 114596802 bayt |
+| IMG_20261108_175024.jpg | 3 | 506 ms | 4786 ms | 114555521 bayt |
+
+Her `MIVI_SUCCESS` kaydında `match=FILENAME_TIME_APPROX` ile doğru görünen ID/fotoğraf bağlantısı oluştu. Bu, **sadece bu üç çekimde eşleştirmenin tutarlı olduğunu** doğrular; saniyelik dosya adı zamanlaması kesin donanım frame ID değildir.
+
+Üçünde de `onCaptureStart isNightCapture=false` ve `isSuperNightSE=false` kaydı var. MiVi çıktısının 114,4–114,6 MB olması önceki testlerdeki yaklaşık 40–52 MB aralığından belirgin biçimde büyük. Sebebi (sahne, JPEG sıkıştırması, kalite ayarı veya farklı işleme yolu) henüz kanıtlanmadı; bu veri uzunluğu Gallery'deki gerçek dosya boyutunu bire bir garanti etmez.
+
+**Sonuç:** API 102 Alpha 3 tanısı cihazda çalışıyor; ancak gerçek 200MP HAL tampon hatası henüz giderilmiş değildir. Hatalar aralıklı olduğundan üç başarılı çekim kesin çözüm kanıtı değildir. `onCaptureStart` ile `MIVI_SUCCESS` arasındaki 4,8–5,4 saniyelik fark da portta orijinal `İşleniyor` ekranını incelemek için ölçülmüş bir referanstır.
