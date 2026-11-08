@@ -5,7 +5,11 @@ import android.util.Log;
 import io.github.libxposed.api.XposedModule;
 import io.github.libxposed.api.XposedModuleInterface;
 import java.lang.reflect.Method;
-import java.util.concurrent.ConcurrentLinkedQueue;
+import java.text.SimpleDateFormat;
+import java.text.ParseException;
+import java.util.Date;
+import java.util.Locale;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -24,17 +28,19 @@ public final class Pixel175Tracer extends XposedModule {
     private static final String TAG = "CAMERA18PRO_V3";
     private static final AtomicBoolean ATTACHED = new AtomicBoolean(false);
     private static final AtomicLong NEXT_ID = new AtomicLong();
-    private static final ConcurrentLinkedQueue<Shot> PENDING =
-            new ConcurrentLinkedQueue<>();
+    private static final ConcurrentLinkedDeque<Shot> PENDING =
+            new ConcurrentLinkedDeque<>();
     private static volatile Shot latest;
 
     private static final class Shot {
         final long id;
         final long startedNs;
+        final long startedWallMs;
         volatile long preliminaryMs = -1;
         Shot(long id) {
             this.id = id;
             this.startedNs = SystemClock.elapsedRealtimeNanos();
+            this.startedWallMs = System.currentTimeMillis();
         }
         long elapsedMs() {
             return (SystemClock.elapsedRealtimeNanos() - startedNs) / 1_000_000L;
@@ -50,7 +56,7 @@ public final class Pixel175Tracer extends XposedModule {
     public void onPackageReady(XposedModuleInterface.PackageReadyParam param) {
         if (!TARGET.equals(param.getPackageName())) return;
         if (!ATTACHED.compareAndSet(false, true)) return;
-        info("API=102 version=3.0.0-alpha2 mode=READ_ONLY correlation=FIFO_HEURISTIC");
+        info("API=102 version=3.0.0-alpha3 mode=READ_ONLY correlation=FILENAME_TIME_APPROX");
         ClassLoader loader = param.getClassLoader();
         install(loader, "com.android.camera.features.mode.pixel.PixelModule",
                 "onCaptureStart", 2, Event.CAPTURE_START);
@@ -87,7 +93,7 @@ public final class Pixel175Tracer extends XposedModule {
                         latest = shot;
                         PENDING.add(shot);
                         while (PENDING.size() > 16) {
-                            Shot stale = PENDING.poll();
+                            Shot stale = PENDING.pollFirst();
                             if (stale != null) {
                                 info("UNMATCHED_CAPTURE id=" + stale.id
                                         + " ageMs=" + stale.elapsedMs()
@@ -103,13 +109,17 @@ public final class Pixel175Tracer extends XposedModule {
 
                     switch (event) {
                         case SHOT2SHOT_FINISH: {
-                            Shot shot = latest;
-                            if (shot != null) {
-                                shot.preliminaryMs = shot.elapsedMs();
-                            }
-                            info("SHOT2SHOT_FINISH id=" + id(shot)
+                            // In the 18 Pro port this callback can run before
+                            // PixelModule.onCaptureStart. Such events must stay unmatched.
+                            Shot shot = PENDING.peekLast();
+                            boolean matched = shot != null
+                                    && shot.preliminaryMs < 0
+                                    && shot.elapsedMs() <= 1800;
+                            if (matched) shot.preliminaryMs = shot.elapsedMs();
+                            info("SHOT2SHOT_FINISH id=" + (matched ? id(shot) : -1)
+                                    + " match=" + (matched ? "RECENT_PENDING" : "UNMATCHED_PRESTART_OR_LATE")
                                     + " preliminary=" + safe(chain.getArg(0))
-                                    + " elapsedMs=" + elapsed(shot)
+                                    + " elapsedMs=" + (matched ? elapsed(shot) : -1)
                                     + " isFinalJpeg=false");
                             break;
                         }
@@ -132,9 +142,11 @@ public final class Pixel175Tracer extends XposedModule {
                             Object output = chain.getArg(0);
                             String metadata = safe(output);
                             String file = getPictureName(metadata, chain.getArg(1));
-                            Shot shot = PENDING.poll();
+                            Match correlation = matchFilenameToShot(file);
+                            Shot shot = correlation.shot;
                             info("MIVI_SUCCESS id=" + id(shot)
-                                    + " match=FIFO_HEURISTIC"
+                                    + " match=" + correlation.label
+                                    + " filenameDeltaMs=" + correlation.deltaMs
                                     + " file=" + file
                                     + " elapsedMs=" + elapsed(shot)
                                     + " preliminaryMs=" + prelim(shot)
@@ -142,7 +154,7 @@ public final class Pixel175Tracer extends XposedModule {
                             break;
                         }
                         case MIVI_ERROR: {
-                            Shot shot = PENDING.poll();
+                            Shot shot = PENDING.pollFirst();
                             info("MIVI_ERROR id=" + id(shot)
                                     + " match=FIFO_HEURISTIC"
                                     + " elapsedMs=" + elapsed(shot)
@@ -174,6 +186,56 @@ public final class Pixel175Tracer extends XposedModule {
         } catch (Throwable t) {
             info("HOOK_UNAVAILABLE " + className + "." + methodName
                     + " reason=" + t.getClass().getSimpleName());
+        }
+    }
+
+    // Timestamp from IMG_yyyyMMdd_HHmmss.jpg has SECOND resolution only.
+    // This is a heuristic, not a trusted capture/frame identity.
+    private static final class Match {
+        final Shot shot;
+        final String label;
+        final long deltaMs;
+        Match(Shot shot, String label, long deltaMs) {
+            this.shot = shot;
+            this.label = label;
+            this.deltaMs = deltaMs;
+        }
+    }
+
+    private static Match matchFilenameToShot(String filename) {
+        long filenameMs = parseFilenameMs(filename);
+        synchronized (PENDING) {
+            Shot best = null;
+            long nearest = Long.MAX_VALUE;
+            if (filenameMs != -1L) {
+                for (Shot candidate : PENDING) {
+                    long difference = Math.abs(candidate.startedWallMs - filenameMs);
+                    if (difference <= 1800 && difference < nearest) {
+                        nearest = difference;
+                        best = candidate;
+                    }
+                }
+            }
+            if (best != null) {
+                PENDING.remove(best);
+                return new Match(best, "FILENAME_TIME_APPROX", nearest);
+            }
+            Shot first = PENDING.pollFirst();
+            return new Match(first, first == null ? "NO_PENDING" : "FIFO_HEURISTIC", -1);
+        }
+    }
+
+    private static long parseFilenameMs(String filename) {
+        if (filename == null) return -1;
+        int idx = filename.indexOf("IMG_");
+        if (idx < 0 || idx + 19 > filename.length()) return -1;
+        try {
+            SimpleDateFormat fmt = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US);
+            fmt.setLenient(false);
+            Date parsed = fmt.parse(filename.substring(idx + 4, idx + 19));
+            return parsed == null ? -1 : parsed.getTime();
+        } catch (ParseException ignored) {
+            return -1;
         }
     }
 
