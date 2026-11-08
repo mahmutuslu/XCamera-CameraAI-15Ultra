@@ -208,17 +208,16 @@ final class ProcessingHint {
             }
             // Both layers depict the SAME saved JPEG: softened first, then
             // each of four quadrants becomes sharp. Avoid preview/JPEG drift.
-            final Bitmap blurredStill;
+            Bitmap softened = null;
             try {
                 Bitmap scaled = Bitmap.createScaledBitmap(image,
                     Math.max(64, image.getWidth() / 2),
                     Math.max(64, image.getHeight() / 2), true);
-                blurredStill = soften(scaled);
+                softened = soften(scaled);
             } catch (Throwable t) {
                 Log.w(TAG, "REVEAL_FOUR_BLUR_FALLBACK " + t.getClass().getSimpleName());
-                blurredStill = null;
             }
-            render.setResult(image, blurredStill);
+            render.setResult(image, softened);
             ValueAnimator tiles = ValueAnimator.ofFloat(0f, 1f);
             tiles.setDuration(3200L);
             tiles.addUpdateListener(a -> {
