@@ -159,6 +159,7 @@ def repack(xcamera_path, bridge_path, version_name):
                 if name == 'META-INF/xposed/java_init.list':
                     content = (b'dev.cameraai.override.ModernCameraAIHook\n'
                                b'dev.cameraai.override.Pixel175Tracer\n'
+                               b'dev.cameraai.override.CameraTurkishHook\n'
                                b'com.leekinn.xcamera.XCameraModule\n')
                 zi = zipfile.ZipInfo(name, info.date_time)
                 zi.compress_type = info.compress_type
