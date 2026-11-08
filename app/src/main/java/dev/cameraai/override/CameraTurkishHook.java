@@ -274,18 +274,23 @@ public final class CameraTurkishHook extends XposedModule {
         try {
             Class<?> camera = Class.forName("com.android.camera.Camera", false, loader);
             int n = 0;
-            for (Method m : camera.getDeclaredMethods()) {
-                if (!m.getName().equals("onCreate") || m.getParameterCount() != 1
-                        || m.getParameterTypes()[0] != Bundle.class
-                        || Modifier.isStatic(m.getModifiers())) continue;
-                hook(m).intercept(chain -> {
-                    Object a = chain.getThisObject();
-                    if (a instanceof Activity) attachTurkishResources((Activity) a);
-                    return chain.proceed();
-                });
-                n++;
+            // Xiaomi Camera 6.8 defines onCreate(Bundle) in superclass
+            // com.android.camera.a, not in the Camera subclass.
+            for (Class<?> owner = camera; owner != null && n == 0;
+                    owner = owner.getSuperclass()) {
+                for (Method m : owner.getDeclaredMethods()) {
+                    if (!m.getName().equals("onCreate") || m.getParameterCount() != 1
+                            || m.getParameterTypes()[0] != Bundle.class
+                            || Modifier.isStatic(m.getModifiers())) continue;
+                    hook(m).intercept(chain -> {
+                        Object a = chain.getThisObject();
+                        if (a instanceof Activity) attachTurkishResources((Activity) a);
+                        return chain.proceed();
+                    });
+                    n++;
+                }
             }
-            note("camera onCreate locale hooks=" + n);
+            note("camera inherited onCreate locale hooks=" + n);
         } catch (Throwable error) {
             note("Camera context unavailable " + error.getClass().getSimpleName());
         }
