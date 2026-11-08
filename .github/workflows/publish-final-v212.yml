@@ -1,0 +1,92 @@
+name: Publish CameraAI XCamera Unified v2.12 Final
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-final-v212.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout versioned source code
+        uses: actions/checkout@v4
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: Install Gradle 8.9
+        run: |
+          curl -fsSL https://services.gradle.org/distributions/gradle-8.9-bin.zip -o /tmp/gradle.zip
+          unzip -q /tmp/gradle.zip -d /opt
+          echo /opt/gradle-8.9/bin >> "$GITHUB_PATH"
+      - name: Compile four-hook API 102 bridge
+        run: gradle --no-daemon :app:assembleDebug
+      - name: Restore approved XCamera base binary
+        run: |
+          base64 --decode release-assets/v2.3.apk.gz.b64 | gzip -d > /tmp/CameraAI_approved_v23_base.apk
+          echo "dd99230d7c3678e6a8302833dee08e3b597bf6c01dd68b031b764c98833ee886  /tmp/CameraAI_approved_v23_base.apk" | sha256sum --check
+      - name: Build signed v2.12 single-APK final
+        run: |
+          python -m pip install -r requirements.txt
+          python -m py_compile tools/build_final_v212.py tools/merge_and_sign.py
+          python tools/build_final_v212.py \
+            --base /tmp/CameraAI_approved_v23_base.apk \
+            --bridge app/build/outputs/apk/debug/app-debug.apk \
+            --output dist/CameraAI_XCamera_v2.12_Tek_Parca_Final.apk
+          (cd dist && sha256sum --check SHA256SUMS.txt)
+      - name: Verify merged content, API 102 entrypoints and Turkish hook
+        run: |
+          python - <<'PY'
+          import hashlib
+          import zipfile
+          apk="dist/CameraAI_XCamera_v2.12_Tek_Parca_Final.apk"
+          with zipfile.ZipFile(apk) as z:
+              assert z.testzip() is None
+              assert z.read("META-INF/xposed/java_init.list") == (
+                  b"dev.cameraai.override.ModernCameraAIHook\n"
+                  b"dev.cameraai.override.Pixel175Tracer\n"
+                  b"dev.cameraai.override.CameraTurkishHook\n"
+                  b"com.leekinn.xcamera.XCameraModule\n"
+              )
+              assert z.read("META-INF/xposed/scope.list").strip()==b"com.android.camera"
+              assert hashlib.sha256(z.read("classes.dex")).hexdigest()=="36b3f29a1707704d11dce5228b7795758c8daa0dd308bded59f6c738a087fc83"
+              dex=z.read("classes2.dex")
+              for name in (b"CameraTurkishHook",b"ProcessingHint",b"Pixel175Tracer",b"ModernCameraAIHook"):
+                  assert name in dex,name
+              assert "2.12".encode("utf-16le") in z.read("AndroidManifest.xml")
+          print("Verified: one APK, 4 hooks, TR, 200MP and XCamera")
+          PY
+      - name: Publish v2.12 final APK with full source archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view v2.12-final >/dev/null 2>&1; then
+            echo "::error::v2.12-final already exists. Never replace previously signed release."
+            exit 1
+          fi
+          gh release create v2.12-final \
+            dist/CameraAI_XCamera_v2.12_Tek_Parca_Final.apk \
+            dist/SHA256SUMS.txt \
+            --target "$GITHUB_SHA" \
+            --title "CameraAI + XCamera + 200 MP + Türkçe — v2.12 TEK PARÇA FINAL" \
+            --notes-file RELEASE_v2.12_FINAL.md \
+            --latest
+      - name: Mark v2.11 separate addon as obsolete prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view v2.11-final >/dev/null 2>&1; then
+            gh release edit v2.11-final --prerelease --title "ESKİ: v2.11 ayrı Türkçe eklentisi (v2.12 kullanın)" || true
+          fi
