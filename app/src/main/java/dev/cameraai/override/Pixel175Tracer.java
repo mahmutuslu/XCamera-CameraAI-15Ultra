@@ -59,7 +59,7 @@ public final class Pixel175Tracer extends XposedModule {
         if (!TARGET.equals(param.getPackageName())) return;
         if (!ATTACHED.compareAndSet(false, true)) return;
         PROCESSING_TIP_ENABLED = "1".equals(readDeviceProperty("debug.cameraai.processingtip"));
-        info("API=102 version=2.4.0-UNIFIED mode=DIAGNOSTIC uiOptIn="
+        info("API=102 version=2.5.0-UNIFIED-175-TILE mode=DIAGNOSTIC uiOptIn="
                 + PROCESSING_TIP_ENABLED + " correlation=FILENAME_TIME_APPROX");
         ProcessingHint.setOEMLook("1".equals(readDeviceProperty("debug.cameraai.oem175ui")));
         ClassLoader loader = param.getClassLoader();
@@ -82,7 +82,7 @@ public final class Pixel175Tracer extends XposedModule {
         if (PROCESSING_TIP_ENABLED) {
             installCameraWindowHook(loader);
         }
-        info("INSTALL_COMPLETE; UI hint (if enabled) ends on MiVi callback, NOT JPEG save");
+        info("INSTALL_COMPLETE; UI tile-reveal waits for stable on-disk 200MP JPEG after MiVi completion");
         info("JPEG requires independent CAPTURE-END and 16320x12288 validation");
     }
 
@@ -161,7 +161,7 @@ public final class Pixel175Tracer extends XposedModule {
                                     + " elapsedMs=" + elapsed(shot)
                                     + " preliminaryMs=" + prelim(shot)
                                     + " metadata=" + metadata);
-                            if (PROCESSING_TIP_ENABLED) ProcessingHint.update(!PENDING.isEmpty(), "MIVI_SUCCESS");
+                            if (PROCESSING_TIP_ENABLED && PENDING.isEmpty()) ProcessingHint.finalImage(file);
                             break;
                         }
                         case MIVI_ERROR: {
@@ -170,7 +170,7 @@ public final class Pixel175Tracer extends XposedModule {
                                     + " match=FIFO_HEURISTIC"
                                     + " elapsedMs=" + elapsed(shot)
                                     + " reason=" + safe(chain.getArg(0)));
-                            if (PROCESSING_TIP_ENABLED) ProcessingHint.update(!PENDING.isEmpty(), "MIVI_ERROR");
+                            if (PROCESSING_TIP_ENABLED && PENDING.isEmpty()) ProcessingHint.error("MIVI_ERROR");
                             break;
                         }
                         case HAL_FAILED: {
