@@ -2,6 +2,8 @@ package dev.camera18pro.v3;
 
 import android.app.Activity;
 import android.graphics.drawable.GradientDrawable;
+import android.os.SystemClock;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -20,6 +22,7 @@ final class ProcessingHint {
     private static volatile WeakReference<TextView> view =
             new WeakReference<>(null);
     private static volatile boolean processing;
+    private static volatile long lastRenderUptime;
 
     private ProcessingHint() { }
 
@@ -72,6 +75,19 @@ final class ProcessingHint {
                     view = new WeakReference<>(label);
                 }
                 label.setVisibility(processing ? View.VISIBLE : View.GONE);
+                if (processing) {
+                    // A missing native callback must not leave a permanent UI indicator.
+                    long marker = SystemClock.uptimeMillis();
+                    lastRenderUptime = marker;
+                    final TextView target = label;
+                    target.postDelayed(() -> {
+                        if (processing && lastRenderUptime == marker) {
+                            processing = false;
+                            target.setVisibility(View.GONE);
+                            Log.w("CAMERA18PRO_V3", "UI_TIMEOUT_20S; no MiVi completion yet");
+                        }
+                    }, 20000L);
+                }
             } catch (Throwable ignored) {
                 // Never throw on camera UI thread.
             }
