@@ -1,5 +1,8 @@
 # XCamera + CameraAI — Xiaomi 15 Ultra
 
+> **GÜNCEL YAYIN (8 Kasım 2026): v2.11 Türkçe kamera ek modülü.** Mevcut çalışan **CameraAI + XCamera v2.10** kaldırılmadan, yanına ayrı bir LSPosed API 102 modülü olarak kurulur. AI Capture Assist ve kamera arayüzünün Türkçeleştirmesini amaçlar; 200 MP çekim kodunu değiştirmez. Ayrıntılı [kurulum, kaynak kod ve sürüm notları](RELEASE_v2.11_TR.md). **v2.11'in cihaz üzerinde Türkçeleştirme doğrulaması henüz yapılmadı.**
+
+
 Xiaomi 15 Ultra (`xuanyuan`, HyperOS 4) için **bağımsız, deneysel LSPosed modül projesi**. FCMFix ile ilişkili değildir.
 
 ## Amaç
