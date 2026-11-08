@@ -157,7 +157,7 @@ public final class ModernCameraAIHook extends XposedModule {
     }
 
     private String zoomProfile() {
-        if ("1".equals(systemFlag("debug.cameraai.oem175", "0"))) {
+        if ("1".equals(systemFlag("debug.cameraai.oem175", "1"))) {
             note("OEM175 selected: 200MP physical 4.3x single lens preset");
             return "1";
         }
@@ -220,7 +220,7 @@ public final class ModernCameraAIHook extends XposedModule {
      * CAUTION: isZoomSegmentEnabled may influence more than visual UI.
      */
     private void hookOEM175SegmentGate(ClassLoader loader) {
-        final boolean enabled = "1".equals(systemFlag("debug.cameraai.oem175", "0"));
+        final boolean enabled = "1".equals(systemFlag("debug.cameraai.oem175", "1"));
         if (!enabled) {
             note("OEM175 zoom segment gate disabled; v2.3 behavior retained");
             return;
@@ -337,7 +337,7 @@ public final class ModernCameraAIHook extends XposedModule {
      *   setCurrentMode(int) and setVisibility(int), both void.
      */
     private void hookOEM175VisualZoomRemoval(ClassLoader loader) {
-        if (!"1".equals(systemFlag("debug.cameraai.oem175", "0"))) {
+        if (!"1".equals(systemFlag("debug.cameraai.oem175", "1"))) {
             note("OEM175 visual zoom removal OFF");
             return;
         }
