@@ -206,7 +206,19 @@ final class ProcessingHint {
                 hide("VIEW_GONE");
                 return;
             }
-            render.setResult(image);
+            // Both layers depict the SAME saved JPEG: softened first, then
+            // each of four quadrants becomes sharp. Avoid preview/JPEG drift.
+            final Bitmap blurredStill;
+            try {
+                Bitmap scaled = Bitmap.createScaledBitmap(image,
+                    Math.max(64, image.getWidth() / 2),
+                    Math.max(64, image.getHeight() / 2), true);
+                blurredStill = soften(scaled);
+            } catch (Throwable t) {
+                Log.w(TAG, "REVEAL_FOUR_BLUR_FALLBACK " + t.getClass().getSimpleName());
+                blurredStill = null;
+            }
+            render.setResult(image, blurredStill);
             ValueAnimator tiles = ValueAnimator.ofFloat(0f, 1f);
             tiles.setDuration(3200L);
             tiles.addUpdateListener(a -> {
@@ -225,7 +237,7 @@ final class ProcessingHint {
             });
             tiles.start();
             Log.i(TAG, "REVEAL_JPEG_READY bitmap=" + image.getWidth() + "x" + image.getHeight()
-                + " duration=3200ms, no_live_preview_crossfade");
+                + " four_quadrants=true source=SAVED_JPEG blur=SAME_PHOTO");
         });
     }
 
@@ -524,7 +536,14 @@ final class ProcessingHint {
 
         void reset() { release(); progress = 0f; invalidate(); }
         void setPreview(Bitmap value) { preview = value; invalidate(); }
-        void setResult(Bitmap value) { result = value; progress = 0f; invalidate(); }
+        void setResult(Bitmap value, Bitmap blurredStill) {
+            if (preview != null && !preview.isRecycled() && preview != blurredStill)
+                preview.recycle();
+            preview = blurredStill;
+            result = value;
+            progress = 0f;
+            invalidate();
+        }
         void setProgress(float value) { progress = value; invalidate(); }
 
         @Override protected void onDraw(Canvas canvas) {
@@ -533,23 +552,21 @@ final class ProcessingHint {
             if (w <= 0 || h <= 0) return;
             if (preview != null && !preview.isRecycled()) {
                 drawCrop(canvas, preview, new Rect(0,0,w,h), soft);
-                canvas.drawColor(0x22000000);
+                // Do not darken the saved JPEG blur during tile restoration.
+                if (result == null) canvas.drawColor(0x1B000000);
             } else {
                 canvas.drawColor(0x441A1A1A);
             }
             if (result == null || result.isRecycled()) return;
-            int columns = 4, rows = 6;
-            float tw = (float)w/columns, th = (float)h/rows;
+            // OEM-like 2x2 (FOUR quadrant) reveal: one quadrant at a time.
+            // The blurred base and sharp tiles are derived from the same JPEG.
+            int columns = 2, rows = 2;
+            float tw = (float)w / columns, th = (float)h / rows;
             for (int row=0;row<rows;row++) for(int col=0;col<columns;col++) {
-                // Xiaomi-like column reveal with a restrained row stagger.
-                // Short per-tile blending minimizes photo/preview ghosting.
-                float columnPhase = col / (float)(columns - 1);
-                float rowPhase = (rows - 1 - row) / (float)(rows - 1);
-                float jitter = ((col + 2 * row) % 3) / 2f;
-                float threshold = 0.07f + 0.55f * columnPhase
-                    + 0.10f * rowPhase + 0.03f * jitter;
+                int quadrant = row * columns + col;
+                float threshold = 0.04f + quadrant * 0.22f;
                 float t = Math.max(0f, Math.min(1f,
-                    (progress - threshold) / 0.17f));
+                    (progress - threshold) / 0.22f));
                 float alpha = t*t*(3f - 2f*t);
                 if (alpha <= 0f) continue;
                 int left = Math.round(col*tw), top=Math.round(row*th);
