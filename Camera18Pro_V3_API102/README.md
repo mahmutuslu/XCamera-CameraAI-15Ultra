@@ -1,69 +1,39 @@
-# Camera18Pro v3 Alpha 3 — Modern Xposed API 102
+# Camera18Pro v3 Alpha 4 — API 102 / Deneysel İşleniyor arayüzü
 
-Xiaomi 15 Ultra (**xuanyuan**, HyperOS 4) + Xiaomi 18 Pro kamera `6.8.002090.2` için **salt-okunur Pixel175 tanı modülü**.
+**Deneysel dal:** `camera18pro-v3-alpha4-processing-ui`
 
-**Önemli:** Bu modül CameraAIMerged + XCamera v2.3'ün yerini ALMAZ. Kamera değerleri, 200MP akışı, yakınlaştırma oranı, işleniyor ekranı veya JPEG verisi değiştirilmez.
+Bu sürüm, kullanıcının cihazından alınan **orijinal Xiaomi 15 Ultra Kamera 6.7.000180.0** DEX kodundaki `PixelModule.onEarlyImageAvailable`, `onFinalImageAvailable` ve `isBlockSnap` metotlarının **Xiaomi 18 Pro 6.8.002090.2** ile karşılaştırılmasına dayanıyor.
 
-## Alpha 3 — hata izolasyonu ve doğru eşleştirme
+## Kodda doğrulanan gerçek farklar
 
-- 8 Kasım 2026 **14:04:52** başarısız JPEG: `SuperNightSE=false` ve `miHalBufferReceiveError`; bu nedenle gece işleme bayrağını zorlamıyoruz.
-- 8 Kasım 2026 **17:28** Alpha 3 testi: dört tam 16320×12288 JPEG, ilk üçünün `isNightCapture=true`, dördüncünün `false` olduğu görüldü.
-- Gerçek gözlem: `onPictureTakenFinished`, bazı normal çekimlerde `onCaptureStart` çağrısından **önce** geliyor.
-- Alpha 3 kancası yalnız bekleyen, son 1,8 saniyede başlamış, daha önce ön aşaması bitmemiş bir çekime `SHOT2SHOT_FINISH` bağlar. Diğerlerini `UNMATCHED_PRESTART_OR_LATE` olarak gösterir.
-- MiVi sonucu fotoğraf dosyasındaki saniye çözünürlüklü zaman ile başlama zamanını **yaklaşık** ilişkilendirir (`FILENAME_TIME_APPROX`). Eşleşemezse `FIFO_HEURISTIC`; hiçbir bekleyen çekim yoksa `NO_PENDING` yazar.
-- Yanlış ilişkilendirmeyi azaltır, fakat kesin donanım frame-ID eşleştirmesi değildir.
-- Bu sürüm HAL hatasını onarmaz, kamera uygulamasını veya çekim ayarlarını değiştirmez.
+- Orijinal `onEarlyImageAvailable`: 180 DEX birimi, `stopFaceDetection`, `pausePreview`; port: 34 birim, aynı çağrılar yok.
+- Orijinal `onFinalImageAvailable`: 81 birim, `Handler.obtainMessage` / `Message.sendToTarget`; port: 24 birim, bu UI mesaj yolu yok.
+- Her iki APK'da `isBlockSnap` içinde `ImagePoolAdapter.getAllAcquiredImageCount()` ve `Camera2Module.getReprocessDataSize()` çağrıları var. Portta tampon koruması tamamen kayıp değil.
+- `restoreUiState()` her iki sürümde `resumePreview()` çağırıyor.
 
-## Alpha 1 → Alpha 3 değişiklikleri
+Orijinal `pausePreview` metodunu portta körlemesine çalıştırmak kamera akışını bozabilir; bu test sürümü onu **çağırmaz**.
 
-- Her `PixelModule.onCaptureStart` çağrısına tekil bir `id` atar.
-- `SHOT2SHOT_FINISH` ilk çekim aşamasını (tam JPEG kaydı **değil**) kaydeder.
-- `ImageReceiverExecutor$2.onSuccess` gerçek MiVi yanıtındaki **resim dosyası adı**, kare ve toplam süreyi kaydeder.
-- Başarı/hata yanıtlarını bekleyen çekimlerle **FIFO tahmini** olarak eşleştirir. Eşleştirme kesin değildir; çoklu ve sırası değişmiş işler yanlış eşleşebilir.
-- `onError`, `onHalFailed` ve `AidlBGServiceClient$1.onCaptureFailed` kancalarıyla hata yolunu kaydeder.
-- `onEarlyImageAvailable` / `onFinalImageAvailable` dinlemesi korunur. Alpha 1'in beş başarılı çekiminde bu olaylar tetiklenmedi.
-- `onHalFailed` tek başına fotoğrafın başarısız olduğunu **kanıtlamaz**. JPEG sonucu orijinal kamera logunda `CAPTURE-END` ve `16320x12288` ile doğrulanmalıdır.
+## Alpha 4'te yeni özellik
 
-## API ve güvenlik
+Sadece `debug.cameraai.processingtip=1` olduğunda:
 
-- `minApiVersion=102`, `targetApiVersion=102`
-- `XposedModule`, `hook().intercept()`, `META-INF/xposed/java_init.list`
-- LSPosed kapsamı: **yalnızca `com.android.camera`**
-- Kurulum veya kullanım için Android Studio gerekli değil.
-- **Eski v2.3 modülü etkin kalsın.**
-- Alpha 1 GitHub Actions tarafından test amaçlı debug anahtarıyla imzalandı. Alpha 3 farklı bir debug anahtarıyla imzalanmış olabilir. Android "uygulama yüklenmedi" derse **yalnızca `dev.camera18pro.v3` Alpha 1 uygulamasını kaldırıp** Alpha 3'ü kur. v2.3 modülünü veya Kamera uygulamasını kaldırma.
+- `PixelModule.onCaptureStart` ile **“200 MP işleniyor…”** etiketi açılır.
+- `ImageReceiverExecutor$2.onSuccess` veya `onError` gelince, bekleyen başka çekim yoksa etiket kapanır.
+- `com.android.camera.Camera.onWindowFocusChanged` üzerinden Activity ekranına dokunma engellemeyen küçük bir yazı eklenir.
 
-## Masaüstüne test logu kaydetme (Windows PowerShell)
+**Varsayılan KAPALI.** Yalnızca kamera uygulaması kullanıcı arayüzünü görüntüler. Kamera ID, QCFA, remosaic, SuperNightSE, RAW-AISP, ses, deklanşör, JPEG veya önizleme kontrolü değiştirilmez.
 
-```powershell
-$adb = 'C:\platform-tools\adb.exe'
-& $adb logcat -c
-# Telefonda: Xiaomi 18 Pro kamera > 200 MP > 4,3x > birkaç çekim, kaydı bitir.
-$dosya = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Camera18Pro_V3_Alpha3_Pixel175.txt'
-& $adb logcat -d -v threadtime -b main -b system -b crash |
-  Out-File -FilePath $dosya -Encoding utf8
-Get-Item $dosya | Select-Object FullName,Length
-```
+Bu, OEM'in tam orijinal **İşleniyor** arayüzünün kopyası değildir; **MiVi işlemi tamamlanma süresini gösteren geri alınabilir deneysel gösterge**dir. `MIVI_SUCCESS`, diske yazılan `CAPTURE-END` ile aynı an değildir.
 
-Gönderilecek dosyada `CAMERA18PRO_V3`, `onReprocessSuccess`, `[CAPTURE-END]`, `miHalBufferReceiveError` ve `smallPicture=true` beraber incelenir.
+## Deneysel kullanım (telefon testi yapılmadı)
 
-## Durum
+1. **CameraAIMerged + XCamera v2.3'ü kaldırma.** Kamera APK'sını değiştirme.
+2. Alpha 3 sürümüne dönme olanağını koru. Alpha 4 farklı imzayla derlenebileceği için yalnız `dev.camera18pro.v3` uygulaması değiştirilebilir.
+3. İlk test varsayılan **kapalı** olsun: `adb shell getprop debug.cameraai.processingtip`.
+4. Etiketi etkinleştirmek için Windows PowerShell: `& 'C:\platform-tools\adb.exe' shell su -c 'setprop debug.cameraai.processingtip 1'`; ardından `am force-stop com.android.camera` ve yeniden aç.
+5. Kapatmak için aynı komutla `0` yap ve kamerayı yeniden başlat.
+6. Log konumu her zaman Masaüstü: `Join-Path ([Environment]::GetFolderPath('Desktop')) 'Camera18Pro_Alpha4_UI.txt'`.
 
-**Tanı sürümü.** Hatanın kök nedeni henüz kesinleşmedi ve PixelModule orijinal `İşleniyor` arayüzü taşınmadı. API 102 kurulumu ve derlemesi doğrulanmalı; çalışması cihaz testine tabidir.
+**Güvenlik:** Modül yalnızca `com.android.camera` için, modern **libxposed API 102** ile çalışır. Android Studio gerekmez. Kök HAL/JPEG hatası henüz çözülmüş değildir; bu bir UI izolasyon deneyidir.
 
-
-## Alpha 3 cihaz doğrulaması — 8 Kasım 2026, 17:50
-
-Xiaomi 15 Ultra üzerinde iki modül birlikte etkinken (CameraAIMerged + XCamera v2.3; Camera18Pro v3 Alpha 3 API 102) **üç 200MP fotoğraf** çekildi. Her üçünde de tam **16320×12288** çözünürlük, `onReprocessSuccess`, `MIVI_SUCCESS` ve `[CAPTURE-END]` kaydedildi; `miHalBufferReceiveError`, `smallPicture=true`, `MIVI_ERROR` görülmedi.
-
-| Fotoğraf | Capture ID | Ön aşama | MiVi başarı süresi | Görüntü veri uzunluğu |
-| --- | ---: | ---: | ---: | ---: |
-| IMG_20261108_175009.jpg | 1 | 517 ms | 5439 ms | 114448035 bayt |
-| IMG_20261108_175016.jpg | 2 | 506 ms | 5043 ms | 114596802 bayt |
-| IMG_20261108_175024.jpg | 3 | 506 ms | 4786 ms | 114555521 bayt |
-
-Her `MIVI_SUCCESS` kaydında `match=FILENAME_TIME_APPROX` ile doğru görünen ID/fotoğraf bağlantısı oluştu. Bu, **sadece bu üç çekimde eşleştirmenin tutarlı olduğunu** doğrular; saniyelik dosya adı zamanlaması kesin donanım frame ID değildir.
-
-Üçünde de `onCaptureStart isNightCapture=false` ve `isSuperNightSE=false` kaydı var. MiVi çıktısının 114,4–114,6 MB olması önceki testlerdeki yaklaşık 40–52 MB aralığından belirgin biçimde büyük. Sebebi (sahne, JPEG sıkıştırması, kalite ayarı veya farklı işleme yolu) henüz kanıtlanmadı; bu veri uzunluğu Gallery'deki gerçek dosya boyutunu bire bir garanti etmez.
-
-**Sonuç:** API 102 Alpha 3 tanısı cihazda çalışıyor; ancak gerçek 200MP HAL tampon hatası henüz giderilmiş değildir. Hatalar aralıklı olduğundan üç başarılı çekim kesin çözüm kanıtı değildir. `onCaptureStart` ile `MIVI_SUCCESS` arasındaki 4,8–5,4 saniyelik fark da portta orijinal `İşleniyor` ekranını incelemek için ölçülmüş bir referanstır.
+**Referans:** Samsung ISOCELL HP9 ve Xiaomi 15 Ultra resmi kamera bilgileri. Pixel binning, remosaic ve AISP yapısı kapalı HAL/sensör işlem hattının bir bölümü olabilir; bu algoritmaların APK'da tam Java kaynak kodu bulunduğu varsayılmıyor.

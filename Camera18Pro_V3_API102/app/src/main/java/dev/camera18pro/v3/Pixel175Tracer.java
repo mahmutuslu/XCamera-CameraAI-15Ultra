@@ -1,5 +1,6 @@
 package dev.camera18pro.v3;
 
+import android.app.Activity;
 import android.os.SystemClock;
 import android.util.Log;
 import io.github.libxposed.api.XposedModule;
@@ -14,10 +15,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Camera18Pro v3 alpha 2. Modern Xposed API 102, read-only diagnostic.
+ * Camera18Pro v3 alpha 4. Modern Xposed API 102; diagnostic + OPT-IN UI hint.
  *
  * This module NEVER changes Camera ID, stream size, zoom, method arguments,
- * method returns, capture UI, or scheduling. It is NOT a v2.3 replacement.
+ * method returns, sensor RAW, or scheduling. UI hint is disabled by default. It is NOT a v2.3 replacement.
  *
  * CAPTURE_START -> preliminary shot -> MiVi result are distinct stages.
  * MiVi result is associated to the oldest pending capture as a *heuristic*;
@@ -31,6 +32,7 @@ public final class Pixel175Tracer extends XposedModule {
     private static final ConcurrentLinkedDeque<Shot> PENDING =
             new ConcurrentLinkedDeque<>();
     private static volatile Shot latest;
+    private static volatile boolean PROCESSING_TIP_ENABLED;
 
     private static final class Shot {
         final long id;
@@ -56,7 +58,9 @@ public final class Pixel175Tracer extends XposedModule {
     public void onPackageReady(XposedModuleInterface.PackageReadyParam param) {
         if (!TARGET.equals(param.getPackageName())) return;
         if (!ATTACHED.compareAndSet(false, true)) return;
-        info("API=102 version=3.0.0-alpha3 mode=READ_ONLY correlation=FILENAME_TIME_APPROX");
+        PROCESSING_TIP_ENABLED = "1".equals(readDeviceProperty("debug.cameraai.processingtip"));
+        info("API=102 version=3.0.0-alpha4 mode=DIAGNOSTIC uiOptIn="
+                + PROCESSING_TIP_ENABLED + " correlation=FILENAME_TIME_APPROX");
         ClassLoader loader = param.getClassLoader();
         install(loader, "com.android.camera.features.mode.pixel.PixelModule",
                 "onCaptureStart", 2, Event.CAPTURE_START);
@@ -74,7 +78,11 @@ public final class Pixel175Tracer extends XposedModule {
                 "onHalFailed", 3, Event.HAL_FAILED);
         install(loader, "com.xiaomi.camera.mivi.AidlBGServiceClient$1",
                 "onCaptureFailed", 3, Event.BG_CAPTURE_FAILED);
-        info("INSTALL_COMPLETE; JPEG requires independent CAPTURE-END and 16320x12288 validation");
+        if (PROCESSING_TIP_ENABLED) {
+            installCameraWindowHook(loader);
+        }
+        info("INSTALL_COMPLETE; UI hint (if enabled) ends on MiVi callback, NOT JPEG save");
+        info("JPEG requires independent CAPTURE-END and 16320x12288 validation");
     }
 
     private void install(ClassLoader loader, String className, String methodName,
@@ -92,6 +100,7 @@ public final class Pixel175Tracer extends XposedModule {
                         Shot shot = new Shot(NEXT_ID.incrementAndGet());
                         latest = shot;
                         PENDING.add(shot);
+                        if (PROCESSING_TIP_ENABLED) ProcessingHint.update(true);
                         while (PENDING.size() > 16) {
                             Shot stale = PENDING.pollFirst();
                             if (stale != null) {
@@ -151,6 +160,7 @@ public final class Pixel175Tracer extends XposedModule {
                                     + " elapsedMs=" + elapsed(shot)
                                     + " preliminaryMs=" + prelim(shot)
                                     + " metadata=" + metadata);
+                            if (PROCESSING_TIP_ENABLED) ProcessingHint.update(!PENDING.isEmpty());
                             break;
                         }
                         case MIVI_ERROR: {
@@ -159,6 +169,7 @@ public final class Pixel175Tracer extends XposedModule {
                                     + " match=FIFO_HEURISTIC"
                                     + " elapsedMs=" + elapsed(shot)
                                     + " reason=" + safe(chain.getArg(0)));
+                            if (PROCESSING_TIP_ENABLED) ProcessingHint.update(!PENDING.isEmpty());
                             break;
                         }
                         case HAL_FAILED: {
@@ -186,6 +197,41 @@ public final class Pixel175Tracer extends XposedModule {
         } catch (Throwable t) {
             info("HOOK_UNAVAILABLE " + className + "." + methodName
                     + " reason=" + t.getClass().getSimpleName());
+        }
+    }
+
+    private void installCameraWindowHook(ClassLoader loader) {
+        try {
+            Class<?> camera = Class.forName("com.android.camera.Camera", false, loader);
+            Method focus = camera.getDeclaredMethod("onWindowFocusChanged", boolean.class);
+            hook(focus).intercept(chain -> {
+                Object result = chain.proceed();
+                // UI errors must never propagate into the camera event handler.
+                try {
+                    if (chain.getThisObject() instanceof Activity) {
+                        Activity activity = (Activity) chain.getThisObject();
+                        boolean hasFocus = Boolean.TRUE.equals(chain.getArg(0));
+                        ProcessingHint.onCameraFocus(activity, hasFocus, !PENDING.isEmpty());
+                    }
+                } catch (Throwable t) {
+                    info("UI_FOCUS_SKIPPED reason=" + t.getClass().getSimpleName());
+                }
+                return result;
+            });
+            info("HOOK Camera.onWindowFocusChanged installed=1; UI opt-in enabled");
+        } catch (Throwable t) {
+            info("UI_HOOK_UNAVAILABLE " + t.getClass().getSimpleName());
+        }
+    }
+
+    private static String readDeviceProperty(String key) {
+        try {
+            Class<?> props = Class.forName("android.os.SystemProperties");
+            Method method = props.getMethod("get", String.class, String.class);
+            Object value = method.invoke(null, key, "0");
+            return value == null ? "0" : String.valueOf(value);
+        } catch (Throwable ignored) {
+            return "0";
         }
     }
 
