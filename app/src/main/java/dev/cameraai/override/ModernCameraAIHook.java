@@ -56,6 +56,7 @@ public final class ModernCameraAIHook extends XposedModule {
         hookTimeout(loader);
         hookZoomPresets(loader);
         hookOEM175SegmentGate(loader);
+        hookMode175ZoomVisibility(loader);
         hookRuntimeZoomDiagnostics(loader);
         hookZoomTranslationProbe(loader);
         hookPixelModeRouting(loader);
@@ -236,6 +237,86 @@ public final class ModernCameraAIHook extends XposedModule {
             note("OEM175 isZoomSegmentEnabled hook installed (opt-in)");
         } catch (Throwable t) {
             note("OEM175 isZoomSegmentEnabled hook unavailable: " + t.getClass().getSimpleName());
+        }
+    }
+
+
+    // v2.5: mode 175 uses HP9 at 4.3x but the user wants NO UI zoom buttons.
+    // Keep lens/preset mapping unchanged; intercept only the view's visibility.
+    private static volatile boolean mode175ZoomHidden = false;
+    private static volatile int pre175ZoomVisibility = android.view.View.VISIBLE;
+    private static volatile java.lang.ref.WeakReference<android.view.View> zoomView =
+        new java.lang.ref.WeakReference<>(null);
+    private static final AtomicInteger zoomVisibilityEvents = new AtomicInteger();
+
+    private void hookMode175ZoomVisibility(ClassLoader loader) {
+        try {
+            Class<?> toggle = Class.forName(
+                "com.android.camera.ui.zoom.ZoomRatioToggleView", false, loader);
+            // DEX 6.8.002090.2 verified: M(int,int,boolean,boolean)
+            // contains the setCapturingMode log and is called when switching to 175.
+            Method capturing = toggle.getDeclaredMethod(
+                "M", int.class, int.class, boolean.class, boolean.class);
+            hook(capturing).intercept(chain -> {
+                int nextMode = (Integer)chain.getArg(0);
+                Object target = chain.getThisObject();
+                final boolean hide = nextMode == 175;
+                if (hide && !mode175ZoomHidden && target instanceof android.view.View) {
+                    pre175ZoomVisibility = ((android.view.View)target).getVisibility();
+                }
+                mode175ZoomHidden = hide;
+                Object original = chain.proceed();
+                if (target instanceof android.view.View) {
+                    android.view.View view = (android.view.View)target;
+                    zoomView = new java.lang.ref.WeakReference<>(view);
+                    // Run after native Xiaomi view layout code, not before.
+                    view.post(() -> {
+                        if (mode175ZoomHidden && hide)
+                            view.setVisibility(android.view.View.INVISIBLE);
+                        else if (!mode175ZoomHidden && !hide)
+                            view.setVisibility(pre175ZoomVisibility);
+                    });
+                }
+                if (zoomVisibilityEvents.getAndIncrement() < 22)
+                    note("ZOOM175 UI mode=" + nextMode + " hide=" + hide
+                        + " HP9/zoom values untouched");
+                return original;
+            });
+            Method visibility = toggle.getDeclaredMethod("setVisibility", int.class);
+            hook(visibility).intercept(chain -> {
+                if (!mode175ZoomHidden) return chain.proceed();
+                int requested = (Integer) chain.getArg(0);
+                if (requested == android.view.View.INVISIBLE
+                    || requested == android.view.View.GONE) return chain.proceed();
+                Object[] args = chain.getArgs().toArray();
+                args[0] = Integer.valueOf(android.view.View.INVISIBLE);
+                if (zoomVisibilityEvents.getAndIncrement() < 22)
+                    note("ZOOM175 suppressed visible request from " + requested + " -> INVISIBLE");
+                return chain.proceed(args);
+            });
+            // Alternative Xiaomi zoom view is present in this port. If the
+            // active zoom implementation switches, hide its corresponding UI too.
+            try {
+                Class<?> alt = Class.forName(
+                  "com.xiaomi.camera.features.zoom.ui.view.toggle.ZoomRatioToggleView",
+                  false, loader);
+                Method altSet = alt.getDeclaredMethod("setVisibility", int.class);
+                hook(altSet).intercept(chain -> {
+                    if (!mode175ZoomHidden) return chain.proceed();
+                    int requested = (Integer)chain.getArg(0);
+                    if (requested != android.view.View.VISIBLE) return chain.proceed();
+                    Object[] args = chain.getArgs().toArray();
+                    args[0] = Integer.valueOf(android.view.View.INVISIBLE);
+                    return chain.proceed(args);
+                });
+                note("ZOOM175 Xiaomi alternative toggle visibility hook installed");
+            } catch (Throwable altError) {
+                note("ZOOM175 alternative toggle unavailable=" + altError.getClass().getSimpleName());
+            }
+            note("ZOOM175 UI visibility hooks installed for mode 175 only");
+        } catch (Throwable t) {
+            note("ZOOM175 UI hook unavailable=" + t.getClass().getSimpleName()
+                + ": " + t.getMessage());
         }
     }
 
