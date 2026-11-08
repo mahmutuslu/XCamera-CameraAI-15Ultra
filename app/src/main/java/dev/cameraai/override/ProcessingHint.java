@@ -216,15 +216,16 @@ final class ProcessingHint {
             tiles.addListener(new AnimatorListenerAdapter() {
                 @Override public void onAnimationEnd(Animator animation) {
                     if (generation != token) return;
-                    overlay.animate().alpha(0f).setDuration(650L)
-                        .withEndAction(() -> {
-                            if (generation == token) hide("TILED_ANIMATION_END");
-                        }).start();
+                    // Do not crossfade the JPEG over the moving camera preview:
+                    // the two frames differ and produce visible double images.
+                    // At 100% tiled reveal the still is complete, so restore UI
+                    // in one frame instead of transparency-blending two scenes.
+                    hide("TILED_ANIMATION_END");
                 }
             });
             tiles.start();
             Log.i(TAG, "REVEAL_JPEG_READY bitmap=" + image.getWidth() + "x" + image.getHeight()
-                + " duration=3200+650ms");
+                + " duration=3200ms, no_live_preview_crossfade");
         });
     }
 
@@ -479,15 +480,17 @@ final class ProcessingHint {
                 canvas.drawColor(0x441A1A1A);
             }
             if (result == null || result.isRecycled()) return;
-            int columns = 4, rows = 6;
+            int columns = 6, rows = 9;
             float tw = (float)w/columns, th = (float)h/rows;
             for (int row=0;row<rows;row++) for(int col=0;col<columns;col++) {
-                // Larger, softly staggered tiles reveal bottom-to-top.
-                // Smoothstep removes the visible block-shaped fade edges.
-                float threshold = 0.06f
-                    + 0.59f * ((rows - 1 - row) / (float)(rows - 1))
-                    + 0.07f * (col / (float)(columns - 1));
-                float t = Math.max(0f, Math.min(1f, (progress - threshold) / 0.28f));
+                // Stagger each individual tile: not a full-width moving row.
+                // Keep the latest tile fully visible by progress=1.0.
+                float verticalPhase = (rows - 1 - row) / (float)(rows - 1);
+                float mosaicPhase = ((col * 5 + row * 3) % columns)
+                    / (float)(columns - 1);
+                float threshold = 0.06f + 0.42f * verticalPhase
+                    + 0.19f * mosaicPhase;
+                float t = Math.max(0f, Math.min(1f, (progress - threshold) / 0.29f));
                 float alpha = t*t*(3f - 2f*t);
                 if (alpha <= 0f) continue;
                 int left = Math.round(col*tw), top=Math.round(row*th);
