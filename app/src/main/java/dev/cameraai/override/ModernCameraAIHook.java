@@ -1,6 +1,10 @@
 package dev.cameraai.override;
 
 import android.util.SparseArray;
+import android.view.View;
+import java.util.WeakHashMap;
+import java.util.Map;
+import java.util.Collections;
 import org.json.JSONObject;
 import java.lang.reflect.Method;
 import java.lang.reflect.Field;
@@ -33,6 +37,8 @@ public final class ModernCameraAIHook extends XposedModule {
     private static final AtomicInteger zoomTrace = new AtomicInteger();
     private static final AtomicInteger deviceZoomTrace = new AtomicInteger();
     private static volatile float pixelRequestedZoom = 4.3f;
+    private static final Map<Object, Boolean> hidden175ZoomViews =
+        Collections.synchronizedMap(new WeakHashMap<>());
     private static final AtomicInteger pixelZoomTrace = new AtomicInteger();
     private static final AtomicInteger pixelSwitchTrace = new AtomicInteger();
     private static final AtomicInteger pixelRouteTrace = new AtomicInteger();
@@ -56,6 +62,7 @@ public final class ModernCameraAIHook extends XposedModule {
         hookTimeout(loader);
         hookZoomPresets(loader);
         hookOEM175SegmentGate(loader);
+        hookOEM175VisualZoomRemoval(loader);
         hookMode175ZoomVisibility(loader);
         hookRuntimeZoomDiagnostics(loader);
         hookZoomTranslationProbe(loader);
@@ -317,6 +324,58 @@ public final class ModernCameraAIHook extends XposedModule {
         } catch (Throwable t) {
             note("ZOOM175 UI hook unavailable=" + t.getClass().getSimpleName()
                 + ": " + t.getMessage());
+        }
+    }
+
+    /**
+     * 200MP UI-only zoom removal. The v2.4 [4.3] list keeps a visible button.
+     * Keep that valid optical preset for camera routing, but hide the toggle
+     * View itself after Xiaomi assigns mode=175. Never change HAL/camera IDs.
+     *
+     * Verified in Xiaomi Camera 6.8 DEX (classes3.dex):
+     * com.android.camera.ui.zoom.ZoomRatioToggleView
+     *   setCurrentMode(int) and setVisibility(int), both void.
+     */
+    private void hookOEM175VisualZoomRemoval(ClassLoader loader) {
+        if (!"1".equals(systemFlag("debug.cameraai.oem175", "0"))) {
+            note("OEM175 visual zoom removal OFF");
+            return;
+        }
+        try {
+            Class<?> zoom = Class.forName(
+                "com.android.camera.ui.zoom.ZoomRatioToggleView", false, loader);
+            Method modeSetter = zoom.getDeclaredMethod("setCurrentMode", int.class);
+            hook(modeSetter).intercept(chain -> {
+                Object value = chain.proceed();
+                Object target = chain.getThisObject();
+                int mode = (Integer) chain.getArg(0);
+                if (!(target instanceof View)) return value;
+                View view = (View) target;
+                if (mode == 175) {
+                    hidden175ZoomViews.put(view, Boolean.TRUE);
+                    view.setVisibility(View.GONE);
+                    note("OEM175 visual zoom hidden: setCurrentMode(175), GONE");
+                } else if (hidden175ZoomViews.remove(view) != null) {
+                    // Restore the normal mode's own layout; do not touch presets.
+                    view.setVisibility(View.VISIBLE);
+                    note("OEM175 visual zoom restored: mode=" + mode);
+                }
+                return value;
+            });
+            Method visibility = zoom.getDeclaredMethod("setVisibility", int.class);
+            hook(visibility).intercept(chain -> {
+                Object target = chain.getThisObject();
+                int requested = (Integer) chain.getArg(0);
+                if (requested == View.VISIBLE && hidden175ZoomViews.containsKey(target)) {
+                    Object[] args = chain.getArgs().toArray();
+                    args[0] = Integer.valueOf(View.GONE);
+                    return chain.proceed(args);
+                }
+                return chain.proceed();
+            });
+            note("OEM175 visual zoom hooks installed: mode + visibility");
+        } catch (Throwable t) {
+            note("OEM175 visual zoom hook unavailable: " + t.getClass().getSimpleName());
         }
     }
 
