@@ -377,19 +377,77 @@ final class ProcessingHint {
         return new Rect(0, 0, width, height);
     }
 
-    /** Lightweight blur of a small screenshot; no Camera HAL or raw access. */
+    /**
+     * True linear-time, two-pass RGB box blur of the preview snapshot.
+     * The old downscale-by-11 + bilinear upscale created giant visible pixels
+     * on 1440px screens. This path preserves the source resolution and blurs
+     * spatial colors without any RAW, camera stream or HAL modifications.
+     */
     private static Bitmap soften(Bitmap bitmap) {
         if (bitmap == null) return null;
+        final int width = bitmap.getWidth(), height = bitmap.getHeight();
+        if (width < 30 || height < 30) return bitmap;
         try {
-            int width = bitmap.getWidth(), height = bitmap.getHeight();
-            Bitmap small = Bitmap.createScaledBitmap(bitmap,
-                Math.max(18, width / 11), Math.max(30, height / 11), true);
-            Bitmap soft = Bitmap.createScaledBitmap(small, width, height, true);
-            if (small != bitmap && small != soft) small.recycle();
-            if (soft != bitmap) bitmap.recycle();
-            return soft;
+            final int radius = Math.max(5, Math.min(16, Math.round(width * 0.055f)));
+            final int window = radius * 2 + 1;
+            final int[] pixels = new int[width * height];
+            final int[] horizontal = new int[width * height];
+            final int[] vertical = new int[width * height];
+            bitmap.getPixels(pixels, 0, width, 0, 0, width, height);
+
+            for (int y = 0; y < height; y++) {
+                final int base = y * width;
+                int sumR = 0, sumG = 0, sumB = 0;
+                for (int offset = -radius; offset <= radius; offset++) {
+                    int x = Math.max(0, Math.min(width - 1, offset));
+                    int pixel = pixels[base + x];
+                    sumR += (pixel >> 16) & 255;
+                    sumG += (pixel >> 8) & 255;
+                    sumB += pixel & 255;
+                }
+                for (int x = 0; x < width; x++) {
+                    horizontal[base + x] = 0xff000000
+                        | ((sumR / window) << 16) | ((sumG / window) << 8)
+                        | (sumB / window);
+                    int removeIndex = Math.max(0, x - radius);
+                    int addIndex = Math.min(width - 1, x + radius + 1);
+                    int remove = pixels[base + removeIndex];
+                    int add = pixels[base + addIndex];
+                    sumR += ((add >> 16) & 255) - ((remove >> 16) & 255);
+                    sumG += ((add >> 8) & 255) - ((remove >> 8) & 255);
+                    sumB += (add & 255) - (remove & 255);
+                }
+            }
+            for (int x = 0; x < width; x++) {
+                int sumR = 0, sumG = 0, sumB = 0;
+                for (int offset = -radius; offset <= radius; offset++) {
+                    int y = Math.max(0, Math.min(height - 1, offset));
+                    int pixel = horizontal[y * width + x];
+                    sumR += (pixel >> 16) & 255;
+                    sumG += (pixel >> 8) & 255;
+                    sumB += pixel & 255;
+                }
+                for (int y = 0; y < height; y++) {
+                    vertical[y * width + x] = 0xff000000
+                        | ((sumR / window) << 16) | ((sumG / window) << 8)
+                        | (sumB / window);
+                    int removeY = Math.max(0, y - radius);
+                    int addY = Math.min(height - 1, y + radius + 1);
+                    int remove = horizontal[removeY * width + x];
+                    int add = horizontal[addY * width + x];
+                    sumR += ((add >> 16) & 255) - ((remove >> 16) & 255);
+                    sumG += ((add >> 8) & 255) - ((remove >> 8) & 255);
+                    sumB += (add & 255) - (remove & 255);
+                }
+            }
+            Bitmap output = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+            output.setPixels(vertical, 0, width, 0, 0, width, height);
+            bitmap.recycle();
+            Log.i(TAG, "REVEAL_BLUR_V28_REAL_BOX radius=" + radius
+                + " size=" + width + "x" + height);
+            return output;
         } catch (Throwable t) {
-            Log.w(TAG, "REVEAL_BLUR_FALLBACK " + t.getClass().getSimpleName());
+            Log.w(TAG, "REVEAL_BLUR_V28_FALLBACK " + t.getClass().getSimpleName());
             return bitmap;
         }
     }
@@ -480,17 +538,18 @@ final class ProcessingHint {
                 canvas.drawColor(0x441A1A1A);
             }
             if (result == null || result.isRecycled()) return;
-            int columns = 6, rows = 9;
+            int columns = 4, rows = 6;
             float tw = (float)w/columns, th = (float)h/rows;
             for (int row=0;row<rows;row++) for(int col=0;col<columns;col++) {
-                // Stagger each individual tile: not a full-width moving row.
-                // Keep the latest tile fully visible by progress=1.0.
-                float verticalPhase = (rows - 1 - row) / (float)(rows - 1);
-                float mosaicPhase = ((col * 5 + row * 3) % columns)
-                    / (float)(columns - 1);
-                float threshold = 0.06f + 0.42f * verticalPhase
-                    + 0.19f * mosaicPhase;
-                float t = Math.max(0f, Math.min(1f, (progress - threshold) / 0.29f));
+                // Xiaomi-like column reveal with a restrained row stagger.
+                // Short per-tile blending minimizes photo/preview ghosting.
+                float columnPhase = col / (float)(columns - 1);
+                float rowPhase = (rows - 1 - row) / (float)(rows - 1);
+                float jitter = ((col + 2 * row) % 3) / 2f;
+                float threshold = 0.07f + 0.55f * columnPhase
+                    + 0.10f * rowPhase + 0.03f * jitter;
+                float t = Math.max(0f, Math.min(1f,
+                    (progress - threshold) / 0.17f));
                 float alpha = t*t*(3f - 2f*t);
                 if (alpha <= 0f) continue;
                 int left = Math.round(col*tw), top=Math.round(row*th);
