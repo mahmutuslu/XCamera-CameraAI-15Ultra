@@ -78,3 +78,21 @@ Birleştirici ilk çalışmada `keys/` altında **yerel özel imza anahtarı** �
 [Xiaomi'nin resmî teknik özelliklerine](https://www.mi.com/tr/product/xiaomi-15-ultra/specs/) göre **200 MP modu periskop kameraya özgüdür**; 1x ana kamera ve 3x telefoto 50 MP sensörler kullanır. 200 MP sensör 15 Ultra'da yaklaşık 4.3x doğal optik görüş açısına sahiptir. 1x veya 3x'in görünmesi, o kadrajda sensörden **gerçek 200 MP ayrıntı** alınacağı anlamına gelmez. Bu kod Kamera HAL'ini ya da fiziksel sensörü değiştirmez. Cihazda test etmeden nihai sürüm olarak yayımlamayın.
 
 Ayrıntılı test akışı: [TEST_PLANI.md](TEST_PLANI.md).
+
+
+## v2.4 — BİRLEŞİK 200 MP / OEM 15 Ultra denemesi (henüz cihazda test edilmedi)
+
+Bu sürümün hedefi **tek kurulu LSPosed APK'sı**: XCamera'nın mevcut DEX'i + CameraAI + Alpha 4'te çalıştığı görülen Pixel175 tanı/gösterge kodu aynı APK içerisinde. Ayrı `dev.camera18pro.v3` APK'sına gerek kalmaz. Mevcut v2.3 yedeği korunur.
+
+Orijinal 15 Ultra 6.7.000180.0 ve 18 Pro port 6.8.002090.2 karşılaştırmasında `PixelModule.onCaptureStart` 165/73, `onEarlyImageAvailable` 180/34, `onFinalImageAvailable` 81/24, `onPictureTakenFinished` 85/22 DEX kod birimiyle ayrışır. Orijinal `pausePreview`, `TiledImageRevealAnimator`, UI final mesaj yolu portta aynı sırada çalışmadığından bunların bytecode'unu **körlemesine kopyalamıyoruz**. Modül yalnızca uyumlu ve geri alınabilir Java/Xposed davranışlarını uygular.
+
+- `debug.cameraai.processingtip=1`: Alpha 4'te cihazda doğrulanmış işleme popup'ını etkinleştirir.
+- `debug.cameraai.oem175ui=1`: popup'ı 15 Ultra videosundaki üst alana taşır ve metni `200MP görüntü işleniyor…` yapar. **Sadece görünüm, önizlemeye dokunmaz.**
+- `debug.cameraai.oem175=1`: **deneysel, varsayılan kapalı** 175 modu için yalnız 4.3x preset ve `PixelModule.isZoomSegmentEnabled=false` kullanır; 1x / 3x seçeneklerini gizleme hipotezi. Bu metot sadece UI yönetmiyor olabilir; çekim öncesi/sonrası davranışlar mutlaka karşılaştırılmalıdır. Çalışma durumunda logda `OEM175 ...` görünür.
+- Varsayılan `debug.cameraai.oem175=0`: v2.3 zoom tercihleri aynen korunur.
+- `UI_SHOW_175`, `UI_HIDE_175` logları; MiVi success/error, gecikme ve 20s UI timeout muhafaza edilir.
+- **HAL/RAW/remosaic/QCFA/ImageReader/Camera ID/preview suspend ve fiziksel zoom değiştirilmez.** `MIVI_SUCCESS` diske JPEG kaydetme son olayı değildir; doğru kontrol için `CAPTURE-END` ve 16320×12288 bağımsız doğrulanmalı.
+
+`merge_and_sign.py` tek APK içinde üç API 102 girişini tutar: `ModernCameraAIHook`, `Pixel175Tracer`, `XCameraModule`. Bu üç sınıf **üç ayrı uygulama değil**, bir modül içindeki girişlerdir.
+
+**İmza uyarısı:** v2.3'ün özel imzalama anahtarı projede yok. Yeni apk imzası eskisinden farklıysa Android güncellemeyi reddeder; yeni birleşik sürüm ancak yedek alındıktan sonra önceki birleşik modül uygulaması kaldırılarak kurulabilir. Sistem kamerası kaldırılmaz. Ayrıca eski ayrı Alpha 4'ün LSPosed etkinliği kapatılmalı; aynı kancaları iki kez kurmayın.

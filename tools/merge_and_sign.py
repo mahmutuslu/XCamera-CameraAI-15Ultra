@@ -158,6 +158,7 @@ def repack(xcamera_path, bridge_path, version_name):
                     content = content.replace(original_version, version_name.encode('utf-16le'))
                 if name == 'META-INF/xposed/java_init.list':
                     content = (b'dev.cameraai.override.ModernCameraAIHook\n'
+                               b'dev.cameraai.override.Pixel175Tracer\n'
                                b'com.leekinn.xcamera.XCameraModule\n')
                 zi = zipfile.ZipInfo(name, info.date_time)
                 zi.compress_type = info.compress_type
@@ -189,7 +190,7 @@ def main():
     parser.add_argument('--xcamera', type=pathlib.Path, required=True)
     parser.add_argument('--bridge', type=pathlib.Path, required=True)
     parser.add_argument('--output', type=pathlib.Path, required=True)
-    parser.add_argument('--version-name', default='1.5', choices=['1.5','1.6','1.7','1.8','1.9','2.0','2.1','2.2','2.3'],
+    parser.add_argument('--version-name', default='1.5', choices=['1.5','1.6','1.7','1.8','1.9','2.0','2.1','2.2','2.3','2.4'],
                         help='Merged APK versionName')
     parser.add_argument('--keydir', type=pathlib.Path,
         default=PROJECT_ROOT/'keys', help='Private signing keys; never upload')

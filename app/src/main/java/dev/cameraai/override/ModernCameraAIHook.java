@@ -55,6 +55,7 @@ public final class ModernCameraAIHook extends XposedModule {
         hookGson(loader);
         hookTimeout(loader);
         hookZoomPresets(loader);
+        hookOEM175SegmentGate(loader);
         hookRuntimeZoomDiagnostics(loader);
         hookZoomTranslationProbe(loader);
         hookPixelModeRouting(loader);
@@ -148,6 +149,10 @@ public final class ModernCameraAIHook extends XposedModule {
     }
 
     private String zoomProfile() {
+        if ("1".equals(systemFlag("debug.cameraai.oem175", "0"))) {
+            note("OEM175 selected: 200MP physical 4.3x single lens preset");
+            return "1";
+        }
         try {
             return String.valueOf(Class.forName("android.os.SystemProperties")
                 .getMethod("get", String.class, String.class)
@@ -198,6 +203,41 @@ public final class ModernCameraAIHook extends XposedModule {
         }
     }
 
+
+
+    /**
+     * OEM 15 Ultra 200MP PixelModule has no lens selector UI.
+     * This experiment is OFF by default and applies ONLY to moduleIndex 175.
+     * Does not modify sensor ID, raw data, camera session, HAL, or JPEG stream.
+     * CAUTION: isZoomSegmentEnabled may influence more than visual UI.
+     */
+    private void hookOEM175SegmentGate(ClassLoader loader) {
+        final boolean enabled = "1".equals(systemFlag("debug.cameraai.oem175", "0"));
+        if (!enabled) {
+            note("OEM175 zoom segment gate disabled; v2.3 behavior retained");
+            return;
+        }
+        try {
+            Class<?> pixel = Class.forName(
+                    "com.android.camera.features.mode.pixel.PixelModule", false, loader);
+            Method gate = pixel.getDeclaredMethod("isZoomSegmentEnabled");
+            hook(gate).intercept(chain -> {
+                Object result = chain.proceed();
+                int mode = currentMode(chain.getThisObject());
+                if (mode == 175) {
+                    if (pixelRouteTrace.getAndIncrement() < 12)
+                        note("OEM175 isZoomSegmentEnabled=" + result + " => false; mode=175");
+                    return Boolean.FALSE;
+                }
+                if (pixelRouteTrace.getAndIncrement() < 12)
+                    note("OEM175 gate skipped: moduleIndex=" + mode + " original=" + result);
+                return result;
+            });
+            note("OEM175 isZoomSegmentEnabled hook installed (opt-in)");
+        } catch (Throwable t) {
+            note("OEM175 isZoomSegmentEnabled hook unavailable: " + t.getClass().getSimpleName());
+        }
+    }
 
     private String systemFlag(String name, String fallback) {
         try {
