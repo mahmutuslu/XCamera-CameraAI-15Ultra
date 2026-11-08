@@ -6,8 +6,8 @@ android {
         applicationId 'dev.cameraai.bridge'
         minSdk 28
         targetSdk 28
-        versionCode 24
-        versionName '2.4.0-unified-175-oem'
+        versionCode 25
+        versionName '2.5.0-175-tiled-reveal'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
