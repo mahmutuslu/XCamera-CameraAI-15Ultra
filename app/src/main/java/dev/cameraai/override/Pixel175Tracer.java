@@ -58,10 +58,10 @@ public final class Pixel175Tracer extends XposedModule {
     public void onPackageReady(XposedModuleInterface.PackageReadyParam param) {
         if (!TARGET.equals(param.getPackageName())) return;
         if (!ATTACHED.compareAndSet(false, true)) return;
-        PROCESSING_TIP_ENABLED = "1".equals(readDeviceProperty("debug.cameraai.processingtip"));
-        info("API=102 version=2.9.0-UNIFIED-175-FOUR mode=DIAGNOSTIC uiOptIn="
+        PROCESSING_TIP_ENABLED = true; // Integrated status always on, no system property needed
+        info("API=102 version=2.10.0-UNIFIED-175-SPINNER mode=DIAGNOSTIC uiOptIn="
                 + PROCESSING_TIP_ENABLED + " correlation=FILENAME_TIME_APPROX");
-        ProcessingHint.setOEMLook("1".equals(readDeviceProperty("debug.cameraai.oem175ui")));
+        ProcessingHint.setOEMLook(true); // integrated UI; no system property needed
         ClassLoader loader = param.getClassLoader();
         install(loader, "com.android.camera.features.mode.pixel.PixelModule",
                 "onCaptureStart", 2, Event.CAPTURE_START);
@@ -82,7 +82,7 @@ public final class Pixel175Tracer extends XposedModule {
         if (PROCESSING_TIP_ENABLED) {
             installCameraWindowHook(loader);
         }
-        info("INSTALL_COMPLETE; UI tile-reveal waits for stable on-disk 200MP JPEG after MiVi completion");
+        info("INSTALL_COMPLETE; simple spinner waits for stable on-disk 200MP JPEG after MiVi completion");
         info("JPEG requires independent CAPTURE-END and 16320x12288 validation");
     }
 
