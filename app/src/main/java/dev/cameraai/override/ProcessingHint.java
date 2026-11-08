@@ -11,9 +11,13 @@ import android.graphics.Rect;
 import android.graphics.RectF;
 import android.media.ExifInterface;
 import android.os.SystemClock;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.TextureView;
+import android.view.SurfaceView;
+import android.view.PixelCopy;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
@@ -97,6 +101,7 @@ final class ProcessingHint {
                 render.reset();
                 Bitmap freeze = previewFrame(root);
                 render.setPreview(freeze);
+                if (freeze == null) requestSurfacePreview(root, render, generation);
                 overlay.setAlpha(1f);
                 overlay.setVisibility(View.VISIBLE);
                 Log.i(TAG, "REVEAL_START reason=" + reason + " freeze=" + (freeze != null));
@@ -244,6 +249,59 @@ final class ProcessingHint {
                 TextureView found = findTexture(parent.getChildAt(i), depth + 1);
                 if (found != null) return found;
             }
+        }
+        return null;
+    }
+
+    /** Fallback for GL/SurfaceView-based Xiaomi preview; no HAL interaction. */
+    private static void requestSurfacePreview(View root, RevealCanvas render, long generation) {
+        SurfaceView surface = findSurface(root, 0);
+        if (surface == null || surface.getHolder() == null
+                || surface.getHolder().getSurface() == null
+                || !surface.getHolder().getSurface().isValid()) {
+            Log.i(TAG, "REVEAL_SNAPSHOT_UNAVAILABLE no_valid_surface");
+            return;
+        }
+        final Bitmap snapshot;
+        try {
+            snapshot = Bitmap.createBitmap(160, 284, Bitmap.Config.ARGB_8888);
+        } catch (Throwable t) {
+            Log.w(TAG, "REVEAL_SNAPSHOT_ALLOC_FAILED " + t.getClass().getSimpleName());
+            return;
+        }
+        try {
+            PixelCopy.request(surface, snapshot, result -> {
+                if (generation == token && processing && result == PixelCopy.SUCCESS) {
+                    render.setPreview(snapshot);
+                    Log.i(TAG, "REVEAL_SNAPSHOT_PIXELCOPY_OK");
+                } else {
+                    snapshot.recycle();
+                    Log.i(TAG, "REVEAL_SNAPSHOT_PIXELCOPY_FAILED code=" + result);
+                }
+            }, new Handler(Looper.getMainLooper()));
+        } catch (Throwable t) {
+            snapshot.recycle();
+            Log.w(TAG, "REVEAL_SNAPSHOT_COPY_ERROR " + t.getClass().getSimpleName());
+        }
+    }
+
+    private static SurfaceView findSurface(View view, int depth) {
+        if (depth > 12) return null;
+        if (view instanceof SurfaceView) {
+            SurfaceView surface = (SurfaceView) view;
+            if (surface.getWidth() > 100 && surface.getHeight() > 100) return surface;
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup parent = (ViewGroup)view;
+            SurfaceView largest = null;
+            int largestArea = 0;
+            for (int i=0; i<parent.getChildCount(); i++) {
+                SurfaceView child = findSurface(parent.getChildAt(i), depth+1);
+                if (child == null) continue;
+                int area = child.getWidth() * child.getHeight();
+                if (area > largestArea) { largestArea = area; largest = child; }
+            }
+            return largest;
         }
         return null;
     }
