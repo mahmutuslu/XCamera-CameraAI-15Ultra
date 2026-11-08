@@ -37,3 +37,19 @@ Bu, OEM'in tam orijinal **İşleniyor** arayüzünün kopyası değildir; **MiVi
 **Güvenlik:** Modül yalnızca `com.android.camera` için, modern **libxposed API 102** ile çalışır. Android Studio gerekmez. Kök HAL/JPEG hatası henüz çözülmüş değildir; bu bir UI izolasyon deneyidir.
 
 **Referans:** Samsung ISOCELL HP9 ve Xiaomi 15 Ultra resmi kamera bilgileri. Pixel binning, remosaic ve AISP yapısı kapalı HAL/sensör işlem hattının bir bölümü olabilir; bu algoritmaların APK'da tam Java kaynak kodu bulunduğu varsayılmıyor.
+
+
+## 8 Kasım 2026 — Alpha 4 cihaz testi
+
+Kullanıcının `Camera18Pro_Alpha4_Isleniyor_Test.txt` logunda, `debug.cameraai.processingtip=1` etkin ve LSPosed UI hook kurulmuşken **“200 MP işleniyor…” göstergesinin göründüğü** kullanıcı tarafından doğrulandı.
+
+| Fotoğraf | CAPTURE_START | SHOT2SHOT_FINISH | MIVI_SUCCESS | CAPTURE-END | Veri uzunluğu |
+| --- | --- | --- | --- | --- | --- |
+| `IMG_20261108_182430.jpg` | 18:24:30.434 (id 1) | +326 ms | +1882 ms | +1934 ms | 45.653.482 bayt |
+| `IMG_20261108_182439.jpg` | 18:24:39.451 (id 2) | +316 ms | +1782 ms | +1832 ms | 46.318.057 bayt |
+
+İkisi de `moduleIndex=175`, `isCaiOn=false`, `16320x12288` çıktı; `onReprocessSuccess` ve `[CAPTURE-END]` var. `miHalBufferReceiveError`, `MIVI_ERROR`, `onCaptureFailed`, `smallPicture=true` veya `UI_TIMEOUT_20S` görülmedi. `isNightCapture=false`, `isSuperNightSE=false`.
+
+**Önemli ayrım:** `MIVI_SUCCESS` ile JPEG'in `CAPTURE-END` olayı arasında yaklaşık 50 ms var; gösterge şu anda **MiVi tamamlandığında** kapatılıyor, diske kaydın bitmesini beklemiyor. Kamera ekranında gerçek gizlenme olayına ait `UI_HIDE` kaydı henüz eklenmediği için kaybolduğu yalnız bu logdan kanıtlanamaz. Bu sürüm, donanım/RAW işleme algoritmalarını değiştirmiyor ve önceki aralıklı HAL hatasının kalıcı çözümü değil.
+
+Öncelikli sonraki güvenli geliştirme: UI göster/gizle olaylarını kendi etiketleriyle kaydetmek; JPEG diske yazımını bloke etmeden ve `pausePreview()`'u zorlamadan, `CAPTURE-END` eşdeğerinin stabil Java geri çağrısını keşfetmek.
