@@ -5,6 +5,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
 import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Rect;
@@ -41,6 +42,8 @@ final class ProcessingHint {
     private static volatile boolean oemLook;
     private static volatile long token;
     private static final String TAG = "CameraAI_175_REVEAL";
+    private static volatile WeakReference<View> shutterRef = new WeakReference<>(null);
+    private static volatile float shutterPreviousAlpha = 1f;
 
     private ProcessingHint() {}
 
@@ -71,46 +74,75 @@ final class ProcessingHint {
             if (generation != token || !processing || activity.isFinishing() || activity.isDestroyed()) return;
             try {
                 FrameLayout root = activity.findViewById(android.R.id.content);
-                if (root == null) return;
-                FrameLayout overlay = overlayRef.get();
-                RevealCanvas render = canvasRef.get();
-                if (overlay == null || overlay.getParent() != root || render == null) {
-                    if (overlay != null && overlay.getParent() instanceof ViewGroup)
-                        ((ViewGroup) overlay.getParent()).removeView(overlay);
-                    overlay = new FrameLayout(activity);
-                    overlay.setClickable(false);
-                    overlay.setFocusable(false);
-                    render = new RevealCanvas(activity);
-                    render.setClickable(false);
-                    overlay.addView(render, new FrameLayout.LayoutParams(-1, -1));
-                    TextView title = new TextView(activity);
-                    title.setText("200MP görüntü işleniyor…");
-                    title.setTextColor(Color.WHITE);
-                    title.setTextSize(16f);
-                    title.setGravity(Gravity.CENTER);
-                    title.setShadowLayer(5f, 0, 2f, 0xC0000000);
-                    title.setClickable(false);
-                    FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
-                        -1, dp(activity, 48), Gravity.TOP);
-                    lp.topMargin = dp(activity, 80);
-                    overlay.addView(title, lp);
-                    root.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
-                    overlayRef = new WeakReference<>(overlay);
-                    canvasRef = new WeakReference<>(render);
-                }
+                if (root == null || root.getWidth() <= 0 || root.getHeight() <= 0) return;
+
+                FrameLayout existing = overlayRef.get();
+                if (existing != null && existing.getParent() instanceof ViewGroup)
+                    ((ViewGroup) existing.getParent()).removeView(existing);
+                RevealCanvas previous = canvasRef.get();
+                if (previous != null) previous.release();
+
+                // A genuine preview snapshot before adding our overlay.
+                Bitmap frozen = previewFrame(root);
+                Rect viewport = findPreviewBounds(root);
+                FrameLayout overlay = new FrameLayout(activity);
+                overlay.setClickable(false);
+                overlay.setFocusable(false);
+                overlay.setBackgroundColor(Color.TRANSPARENT);
+
+                FrameLayout previewLayer = new FrameLayout(activity);
+                previewLayer.setClickable(false);
+                previewLayer.setFocusable(false);
+                previewLayer.setClipChildren(true);
+                previewLayer.setClipToPadding(true);
+
+                RevealCanvas render = new RevealCanvas(activity);
+                render.setClickable(false);
+                previewLayer.addView(render, new FrameLayout.LayoutParams(-1, -1));
+
+                TextView title = new TextView(activity);
+                title.setText("200MP görüntü işleniyor...");
+                title.setTextColor(Color.WHITE);
+                title.setTextSize(11.5f);
+                title.setGravity(Gravity.CENTER);
+                title.setPadding(dp(activity, 12), dp(activity, 5),
+                                 dp(activity, 12), dp(activity, 5));
+                title.setClickable(false);
+                GradientDrawable bubble = new GradientDrawable();
+                bubble.setColor(0x76000000);
+                bubble.setCornerRadius(dp(activity, 14));
+                title.setBackground(bubble);
+                FrameLayout.LayoutParams titleParams = new FrameLayout.LayoutParams(
+                    -2, -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+                titleParams.topMargin = dp(activity, 10);
+                previewLayer.addView(title, titleParams);
+
+                FrameLayout.LayoutParams previewParams = new FrameLayout.LayoutParams(
+                    viewport.width(), viewport.height(), Gravity.LEFT | Gravity.TOP);
+                previewParams.leftMargin = viewport.left;
+                previewParams.topMargin = viewport.top;
+                overlay.addView(previewLayer, previewParams);
+                root.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
+
+                overlayRef = new WeakReference<>(overlay);
+                canvasRef = new WeakReference<>(render);
                 render.reset();
-                Bitmap freeze = previewFrame(root);
-                render.setPreview(freeze);
-                if (freeze == null) requestSurfacePreview(root, render, generation);
-                overlay.setAlpha(1f);
+                if (frozen != null) render.setPreview(soften(frozen));
+                else requestSurfacePreview(root, render, generation);
+                dimShutter(root);
                 overlay.setVisibility(View.VISIBLE);
-                Log.i(TAG, "REVEAL_START reason=" + reason + " freeze=" + (freeze != null));
-                final long capturedToken = generation;
+                overlay.setAlpha(1f);
+
+                Log.i(TAG, "REVEAL_V26_START reason=" + reason
+                    + " preview=" + viewport.toShortString()
+                    + " frozen=" + (frozen != null)
+                    + " controls=UNOBSCURED");
                 overlay.postDelayed(() -> {
-                    if (capturedToken == token && processing) hide("TIMEOUT_20S");
+                    if (generation == token && processing) hide("TIMEOUT_20S");
                 }, 20000L);
             } catch (Throwable t) {
                 Log.w(TAG, "REVEAL_SHOW_ERROR: " + t.getClass().getSimpleName());
+                hide("UI_ERROR");
             }
         });
     }
@@ -176,7 +208,7 @@ final class ProcessingHint {
             }
             render.setResult(image);
             ValueAnimator tiles = ValueAnimator.ofFloat(0f, 1f);
-            tiles.setDuration(3600L);
+            tiles.setDuration(3200L);
             tiles.addUpdateListener(a -> {
                 if (generation == token) render.setProgress((Float)a.getAnimatedValue());
                 else a.cancel();
@@ -184,7 +216,7 @@ final class ProcessingHint {
             tiles.addListener(new AnimatorListenerAdapter() {
                 @Override public void onAnimationEnd(Animator animation) {
                     if (generation != token) return;
-                    overlay.animate().alpha(0f).setDuration(850L)
+                    overlay.animate().alpha(0f).setDuration(650L)
                         .withEndAction(() -> {
                             if (generation == token) hide("TILED_ANIMATION_END");
                         }).start();
@@ -192,7 +224,7 @@ final class ProcessingHint {
             });
             tiles.start();
             Log.i(TAG, "REVEAL_JPEG_READY bitmap=" + image.getWidth() + "x" + image.getHeight()
-                + " duration=3600+850ms");
+                + " duration=3200+650ms");
         });
     }
 
@@ -272,7 +304,7 @@ final class ProcessingHint {
         try {
             PixelCopy.request(surface, snapshot, result -> {
                 if (generation == token && processing && result == PixelCopy.SUCCESS) {
-                    render.setPreview(snapshot);
+                    render.setPreview(soften(snapshot));
                     Log.i(TAG, "REVEAL_SNAPSHOT_PIXELCOPY_OK");
                 } else {
                     snapshot.recycle();
@@ -306,6 +338,97 @@ final class ProcessingHint {
         return null;
     }
 
+
+    /** Restrict render only to the real camera preview, NEVER the bottom controls. */
+    private static Rect findPreviewBounds(FrameLayout root) {
+        int width = root.getWidth(), height = root.getHeight();
+        View target = findSurface(root, 0);
+        if (target == null) target = findTexture(root, 0);
+        Rect measured = new Rect();
+        if (target != null && target.getWidth() > 0 && target.getHeight() > 0) {
+            int[] origin = new int[2];
+            int[] child = new int[2];
+            root.getLocationOnScreen(origin);
+            target.getLocationOnScreen(child);
+            measured.set(child[0]-origin[0], child[1]-origin[1],
+                child[0]-origin[0]+target.getWidth(),
+                child[1]-origin[1]+target.getHeight());
+            if (!measured.intersect(new Rect(0, 0, width, height)))
+                measured.setEmpty();
+        }
+        if (height > width) {
+            // Mode 175 is a portrait 200MP viewfinder. Some vendor SurfaceViews
+            // intentionally occupy the whole activity behind the shutter.
+            // Do not draw above the toolbar or over the bottom controls.
+            int fallbackTop = Math.round(height * 0.180f);
+            int fallbackBottom = Math.round(height * 0.775f);
+            boolean valid = !measured.isEmpty()
+                && measured.height() >= height * 0.38f
+                && measured.height() <= height * 0.70f
+                && measured.top >= height * 0.10f
+                && measured.bottom <= height * 0.81f;
+            Rect result = valid ? measured :
+                new Rect(0, fallbackTop, width, fallbackBottom);
+            result.intersect(new Rect(0, fallbackTop, width, fallbackBottom));
+            return result;
+        }
+        if (!measured.isEmpty()) return measured;
+        return new Rect(0, 0, width, height);
+    }
+
+    /** Lightweight blur of a small screenshot; no Camera HAL or raw access. */
+    private static Bitmap soften(Bitmap bitmap) {
+        if (bitmap == null) return null;
+        try {
+            int width = bitmap.getWidth(), height = bitmap.getHeight();
+            Bitmap small = Bitmap.createScaledBitmap(bitmap,
+                Math.max(18, width / 11), Math.max(30, height / 11), true);
+            Bitmap soft = Bitmap.createScaledBitmap(small, width, height, true);
+            if (small != bitmap && small != soft) small.recycle();
+            if (soft != bitmap) bitmap.recycle();
+            return soft;
+        } catch (Throwable t) {
+            Log.w(TAG, "REVEAL_BLUR_FALLBACK " + t.getClass().getSimpleName());
+            return bitmap;
+        }
+    }
+
+    /** Dim only the genuine camera shutter View; restore its exact old alpha. */
+    private static void dimShutter(View root) {
+        restoreShutter();
+        View shutter = findShutter(root, 0);
+        if (shutter == null) {
+            Log.i(TAG, "REVEAL_SHUTTER_UNAVAILABLE");
+            return;
+        }
+        shutterPreviousAlpha = shutter.getAlpha();
+        shutterRef = new WeakReference<>(shutter);
+        shutter.setAlpha(Math.min(shutterPreviousAlpha, 0.52f));
+        Log.i(TAG, "REVEAL_SHUTTER_DIM class=" + shutter.getClass().getSimpleName());
+    }
+
+    private static void restoreShutter() {
+        View shutter = shutterRef.get();
+        if (shutter != null) shutter.setAlpha(shutterPreviousAlpha);
+        shutterRef = new WeakReference<>(null);
+    }
+
+    private static View findShutter(View view, int depth) {
+        if (depth > 20) return null;
+        String name = view.getClass().getName();
+        if ((name.contains("CameraSnapView") || name.endsWith(".SnapView"))
+                && view.getWidth() > 0 && view.getHeight() > 0
+                && view.getVisibility() == View.VISIBLE) return view;
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup)view;
+            for (int i=0; i<group.getChildCount(); i++) {
+                View match = findShutter(group.getChildAt(i), depth+1);
+                if (match != null) return match;
+            }
+        }
+        return null;
+    }
+
     private static void hide(String reason) {
         processing = false;
         token++;
@@ -320,6 +443,7 @@ final class ProcessingHint {
                     ((ViewGroup)overlay.getParent()).removeView(overlay);
             }
             if (render != null) render.release();
+            restoreShutter();
             overlayRef = new WeakReference<>(null);
             canvasRef = new WeakReference<>(null);
             Log.i(TAG, "REVEAL_END reason=" + reason);
@@ -350,17 +474,21 @@ final class ProcessingHint {
             if (w <= 0 || h <= 0) return;
             if (preview != null && !preview.isRecycled()) {
                 drawCrop(canvas, preview, new Rect(0,0,w,h), soft);
-                canvas.drawColor(0x88000000);
+                canvas.drawColor(0x22000000);
             } else {
-                canvas.drawColor(0x990A0C10);
+                canvas.drawColor(0x441A1A1A);
             }
             if (result == null || result.isRecycled()) return;
-            int columns = 8, rows = 12;
+            int columns = 4, rows = 6;
             float tw = (float)w/columns, th = (float)h/rows;
             for (int row=0;row<rows;row++) for(int col=0;col<columns;col++) {
-                // Diagonal staggered tiles, progressively revealing the genuine JPEG.
-                float threshold = 0.72f * ((row + col) / (float)(rows + columns - 2));
-                float alpha = Math.max(0f, Math.min(1f, (progress-threshold) / 0.28f));
+                // Larger, softly staggered tiles reveal bottom-to-top.
+                // Smoothstep removes the visible block-shaped fade edges.
+                float threshold = 0.06f
+                    + 0.59f * ((rows - 1 - row) / (float)(rows - 1))
+                    + 0.07f * (col / (float)(columns - 1));
+                float t = Math.max(0f, Math.min(1f, (progress - threshold) / 0.28f));
+                float alpha = t*t*(3f - 2f*t);
                 if (alpha <= 0f) continue;
                 int left = Math.round(col*tw), top=Math.round(row*th);
                 int right = col==columns-1?w:Math.round((col+1)*tw);
