@@ -59,7 +59,7 @@ public final class Pixel175Tracer extends XposedModule {
         if (!TARGET.equals(param.getPackageName())) return;
         if (!ATTACHED.compareAndSet(false, true)) return;
         PROCESSING_TIP_ENABLED = "1".equals(readDeviceProperty("debug.cameraai.processingtip"));
-        info("API=102 version=2.5.0-UNIFIED-175-TILE mode=DIAGNOSTIC uiOptIn="
+        info("API=102 version=2.7.0-UNIFIED-175-MOSAIC mode=DIAGNOSTIC uiOptIn="
                 + PROCESSING_TIP_ENABLED + " correlation=FILENAME_TIME_APPROX");
         ProcessingHint.setOEMLook("1".equals(readDeviceProperty("debug.cameraai.oem175ui")));
         ClassLoader loader = param.getClassLoader();
