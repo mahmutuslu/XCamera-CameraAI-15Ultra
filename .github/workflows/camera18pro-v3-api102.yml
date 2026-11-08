@@ -1,0 +1,48 @@
+name: Camera18Pro v3 - Xposed API 102 Build
+on:
+  push:
+    branches:
+      - camera18pro-v3-api102
+    paths:
+      - 'Camera18Pro_V3_API102/**'
+      - '.github/workflows/camera18pro-v3-api102.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+      - name: SDK platform 35
+        run: sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Build debug APK
+        run: gradle --no-daemon -p Camera18Pro_V3_API102 :app:assembleDebug
+      - name: Verify modern Xposed metadata
+        shell: bash
+        run: |
+          APK=Camera18Pro_V3_API102/app/build/outputs/apk/debug/app-debug.apk
+          unzip -p "$APK" META-INF/xposed/module.prop | grep -Fx 'targetApiVersion=102'
+          unzip -p "$APK" META-INF/xposed/module.prop | grep -Fx 'minApiVersion=102'
+          unzip -p "$APK" META-INF/xposed/java_init.list | grep -Fx 'dev.camera18pro.v3.Pixel175Tracer'
+          unzip -p "$APK" META-INF/xposed/scope.list | grep -Fx 'com.android.camera'
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Camera18Pro-v3-alpha1-API102-debug
+          path: Camera18Pro_V3_API102/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
